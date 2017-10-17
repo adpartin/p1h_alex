@@ -1,4 +1,3 @@
-""" Created by Alex Partin """
 import os
 import numpy as np
 import pandas as pd
@@ -7,71 +6,16 @@ import keras
 from keras import backend as K
 from keras.models import Sequential, Model
 from keras import Input
-from keras import layers, optimizers, losses
+from keras import layers, optimizers, losses, regularizers
+from keras.layers import Dense, Flatten, Dropout, BatchNormalization, Activation
+from keras.layers import Conv1D, MaxPooling1D, GlobalMaxPooling1D, Embedding, LSTM, GRU, Bidirectional
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
-
-
-def choose_gpu(use_devices='single', verbose=True):
-    """ Check if any gpu's are visible and decide how many to use.
-    An alternative (better?) approach to this function can be implemented in bash script that also checks if GPU's are
-    not just visible but also not available (parse the output of 'nvidia-smi').
-
-    http://www.acceleware.com/blog/cudavisibledevices-masking-gpus
-
-    Args:
-        use_devices (str): specifuy which gpu devices to use.
-            'single': use a single device (default is 0)
-            'all': use all devices
-            '0, 2': use device 0 and 2
-    """
-    # TODO for some reason it activates all the visible gpu's! take care of this!
-
-    # Check all visible devices
-    from tensorflow.python.client import device_lib
-    device_names = [device.name for device in device_lib.list_local_devices()]
-    print("\nVisibile devices: {}".format(device_names))
-
-    # Check how many gpu's are visible
-    n_gpu = np.asarray([True if 'gpu' in n else False for n in device_names]).sum()
-    print("Visibile GPU's (total): {}".format(n_gpu))
-
-    # Return if no gpu are visible
-    if n_gpu == 0 and verbose:
-        print("No GPU's found.")
-        return
-    elif n_gpu == 0:
-        return
-
-    # Get GPU names
-    gpu = [n for n in device_names if 'gpu' in n]
-
-    # Set enviroment variable CUDA_VISIBLE_DEVICES to specify which gpu to use
-    if use_devices == 'single':
-        print("use_devices='single'")
-        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    elif use_devices == 'all':
-        print("use_devices='all'")
-        os.environ["CUDA_VISIBLE_DEVICES"] = ', '.join([device[device.find(':')+1:] for device in gpu])
-    else:
-        print("use_devices='else'")
-        # TODO add condition/exception that checks that legal use_devices provided
-        os.environ["CUDA_VISIBLE_DEVICES"] = use_devices
-
-    # This is required when we execute plotting on remote machine!
-    # Force matplotlib to not use any Xwindows backend
-    # Allows to display figures on remotes and must come before import matplotlib.pyplot as plt
-    import matplotlib
-    matplotlib.use('Agg')
-
-    if verbose:
-        print("\nUsing GPU devices (device index):  {}.\n".format(os.environ["CUDA_VISIBLE_DEVICES"]))
-
-    return
+from keras.utils import plot_model
 
 
 def r_square(y_true, y_pred):
-    """ R^2 learning `metric` for model.fit(). """
+    """ R^2 learning metric for keras model.fit(). """
     SS_res = K.sum(K.square(y_true - y_pred))
     SS_tot = K.sum(K.square(y_true - K.mean(y_true)))
     r_sqr = (1.0 - SS_res/(SS_tot + K.epsilon()))
@@ -79,7 +23,7 @@ def r_square(y_true, y_pred):
 
 
 def r_square_adjusted(y_true, y_pred, n, k):
-    """ Radj^2 learning `metric` for model.fit().
+    """ Radj^2 learning metric for keras model.fit().
     https://en.wikipedia.org/wiki/Coefficient_of_determination#Adjusted_R2
 
     Args:
@@ -93,60 +37,65 @@ def r_square_adjusted(y_true, y_pred, n, k):
     return r_sqr_adj
 
 
-def plot_learning_kfold(hs, history, savefig=True, img_name=None):
-    """ Plot learning progress (averaged across k folds).
-
-    Args:
-        hs:
-        history: a callback object from keras model tranining (model.fit)
-        metrics:
-        savefig:
-        img_name:
+def get_performance_metrics(history):
+    """ Extract names of all the recorded performance metrics from keras `history` variable for train and val sets.
+    The performance metrics can be indentified as those that start with 'val'.
     """
-    # TODO eliminate the need to pass history
-    import matplotlib.pyplot as plt
-    plt.rcParams['figure.figsize'] = [10, 8]
-    legend_font_size = 10
-
-    epochs = np.asarray(history.epoch) + 1
-    k_folds = len(hs)
-
-    # Extract names of all recorded performance metrics for training and val sets
-    all_metrics = list(hs[0].keys())  # all metrics including everything returned from callbacks
+    all_metrics = list(history.history.keys())  # all metrics including everything returned from callbacks
     pr_metrics = []  # performance metrics recorded for train and val such as 'loss', etc. (excluding callbacks)
     for m in all_metrics:
         if 'val' in m:
             pr_metrics.append('_'.join(m.split('_')[1:]))
 
+    return pr_metrics
+
+
+def plot_learning_kfold(hs, savefig=True, img_name='learn_kfold'):
+    """ Plot the learning progress (averaged across k folds).
+
+    Args:
+        hs (dict of keras callbacks): a callback object from keras model tranining model.fit()
+        savefig (bool): wether to save the fig
+        img_name (figure name): name of the saved figure
+    """
+    import matplotlib.pyplot as plt
+    plt.rcParams['figure.figsize'] = [10, 8]
+    legend_font_size = 10
+
+    epochs = np.asarray(hs[0].epoch) + 1
+    k_folds = len(hs)
+
+    # Extract names of all recorded performance metrics for training and val sets
+    pr_metrics = get_performance_metrics(hs[0])
+
     # Plot
     for m in pr_metrics:
         metric_name = m
-        metric_val_name = 'val_' + m
+        metric_name_val = 'val_' + m
 
-        # Compute avg across folds
-        metric_avg = np.asarray([hs[fold][metric_name] for fold in hs]).sum(axis=0, keepdims=True) / k_folds
-        metric_val_avg = np.asarray([hs[fold][metric_val_name] for fold in hs]).sum(axis=0, keepdims=True) / k_folds
+        # Compute the average of a metric across folds
+        metric_avg = np.asarray([hs[fold].history[metric_name] for fold in hs]).sum(axis=0, keepdims=True) / k_folds
+        metric_avg_val = np.asarray([hs[fold].history[metric_name_val] for fold in hs]).sum(axis=0, keepdims=True) / k_folds
 
-        # Plot metrics for each fold vs epochs
-        # TODO the code for plotting below can be combined with plot_learning()
+        # Plot a metric for each fold vs epochs
+        # TODO: check how this code can be combined with plot_learning()
         marker = ['b.', 'r^', 'kx', 'mv', 'gp', 'bs', 'r8', 'kD']
         fig = plt.figure()
-        for i, metric in enumerate([metric_name, metric_val_name]):
+        for i, metric in enumerate([metric_name, metric_name_val]):
             ax = fig.add_subplot(3, 1, i + 1)
             for fold in range(k_folds):
-                plt.plot(epochs, hs[fold][metric], label="fold{}".format(fold + 1))
+                plt.plot(epochs, hs[fold].history[metric], label="fold{}".format(fold + 1))
             plt.ylabel(metric)
             plt.grid('on')
             plt.xlim([0.5, len(epochs) + 0.5])
             plt.ylim([0, 1])
             plt.legend(loc='best', prop={'size': legend_font_size})
-        # plt.savefig('kfold_cv')
 
-        # Plot the average of metrics across folds vs epochs
+        # Plot the average of a metric across folds vs epochs
         ax = fig.add_subplot(3, 1, 3)
         plt.plot(epochs, metric_avg.flatten(), 'bo', label=metric_name)
-        plt.plot(epochs, metric_val_avg.flatten(), 'rx', label=metric_val_name)
-        plt.ylabel('loss avg over folds')
+        plt.plot(epochs, metric_avg_val.flatten(), 'rx', label=metric_name_val)
+        plt.ylabel(metric_name+' avg over folds')
         plt.xlabel('Epochs')
         plt.grid('on')
         plt.xlim([0.5, len(epochs) + 0.5])
@@ -154,107 +103,55 @@ def plot_learning_kfold(hs, history, savefig=True, img_name=None):
         plt.legend(loc='best', prop={'size': legend_font_size})
 
         if savefig:
-            if img_name:
-                plt.savefig(img_name + '_' + metric_name)
-            else:
-                plt.savefig('learning_kfold')
+            plt.savefig(img_name + '_' + metric_name + '.png')
 
 
-# # =====================
-#     loss_avg = np.asarray([hs[f]['loss'] for f in hs]).sum(axis=0, keepdims=True) / len(hs)
-#     val_loss_avg = np.asarray([hs[f]['val_loss'] for f in hs]).sum(axis=0, keepdims=True) / len(hs)
-#     # train_loss = np.asarray([hs[f]['loss'] for f in range(len(hs))]).mean(axis=0)
-#     # train_metric = np.asarray([hs[f]['r_square'] for f in range(len(hs))]).mean(axis=0)
-#
-#     # Plot metrics for each fold vs epochs
-#     marker = ['bo', 'b^', 'bx', 'bv', 'bp', 'bs', 'b8', 'bD']
-#     fig = plt.figure()
-#     for i, metric in enumerate(['loss', 'val_loss']):
-#         ax = fig.add_subplot(3, 1, i + 1)
-#         for fold in range(len(hs)):
-#             plt.plot(epochs, hs[fold][metric], label="fold{}".format(fold + 1))
-#         plt.ylabel(metric)
-#         plt.grid('on')
-#         plt.xlim([0.5, len(epochs) + 0.5])
-#         plt.ylim([0, 1])
-#         plt.legend(loc='best', prop={'size': legend_font_size})
-#     # plt.savefig('kfold_cv')
-#
-#     # Plot the average of metrics across folds vs epochs
-#     ax = fig.add_subplot(3, 1, 3)
-#     plt.plot(epochs, loss_avg.flatten(), 'bo', label='loss')
-#     plt.plot(epochs, val_loss_avg.flatten(), 'rx', label='val_loss')
-#     plt.ylabel('loss avg over folds')
-#     plt.xlabel('Epochs')
-#     plt.grid('on')
-#     plt.xlim([0.5, len(epochs) + 0.5])
-#     plt.ylim([0, 1])
-#     plt.legend(loc='best', prop={'size': legend_font_size})
-#
-#     if savefig:
-#         if img_name:
-#             plt.savefig(img_name)
-#         else:
-#             plt.savefig('learning_kfold')
-# # =====================
-
-
-def plot_learning(history, metrics=None, savefig=True, img_name=None):
-    """ Plot learning progress for all recorded metrics. This function should be used with hold-out validation scheme
-    since it allows to plot learning rate on a separate axis.
+def plot_learning(history, savefig=True, img_name='learning_with_lr'):
+    """ Plot the learning progress for all the recorded metrics. This function should be used with hold-out validation
+    scheme since it allows to plot learning rate on a separate axis.
 
     Args:
-        history: a callback object from keras model tranining (model.fit)
-        metrics:
-        savefig:
-        img_name:
+        history (keras callback): return callback object from keras model tranining model.fit()
+        savefig (bool): wether to save the fig
+        img_name (figure name): name of the saved figure
     """
-    legend_font_size = 10
     import matplotlib.pyplot as plt
-    hs = history.history.copy()
+    plt.rcParams['figure.figsize'] = [10, 8]
+    legend_font_size = 10
+
+    # Get the epochs vector and the recorded metrics during training
     epochs = np.asarray(history.epoch) + 1
+    hh = history.history.copy()
 
-    # TODO find all keys with 'val' substring and the corresponding equivalent metrics of the training set
-    if 'lr' in hs:
-        lr = hs['lr']
-        hs.pop('lr', None)  # temporary solution
+    # Extract names of all recorded performance metrics for training and val sets
+    pr_metrics = get_performance_metrics(history)
 
-    metrics = list(hs.keys())  # list of all the recorded metrics during training
-
-    m = len(metrics) // 2  # number of unique metrics
     fig = plt.figure()
-    for p in range(m):
-        ylabel_name = '_'.join(metrics[p].split('_')[1:])
-        ax = fig.add_subplot(m, 1, p + 1)
+    for p, m in enumerate(pr_metrics):
+        ax = fig.add_subplot(len(pr_metrics), 1, p + 1)
 
-        if 'val' in metrics[0] and 'val' in metrics[1]:
-            # set-wise
-            plt.plot(epochs, hs[metrics[p]], 'bo', label=metrics[p])
-            plt.plot(epochs, hs[metrics[p + m]], 'rx', label=metrics[p + m])
-        else:
-            # metric-wise
-            plt.plot(epochs, hs[metrics[2 * p]], 'bo', label=metrics[2 * p])
-            plt.plot(epochs, hs[metrics[2 * p + 1]], 'rx', label=metrics[2 * p + 1])
+        metric_name = m
+        metric_name_val = 'val_' + m
 
-        ax.set_ylabel(ylabel_name)
+        plt.plot(epochs, hh[metric_name], 'bo', label=metric_name)
+        plt.plot(epochs, hh[metric_name_val], 'rx', label=metric_name_val)
+        plt.ylabel(metric_name)
+
         plt.grid('on')
         plt.xlim([0.5, len(epochs) + 0.5])
         plt.ylim([0, 1])
-        legend = ax.legend(loc='best', prop={'size': legend_font_size})  # doesn't work
+        legend = ax.legend(loc='upper left', prop={'size': legend_font_size})
         frame = legend.get_frame()
         frame.set_facecolor('0.70')
 
         # Plot learning rate over epochs
-        # TODO check if lr exists
-        _ = add_another_y_axis(ax=ax, x=epochs, y=lr, color='g', marker='^', yscale='log', y_axis_name='Learning rate')
+        if 'lr' in hh.keys():
+            _ = add_another_y_axis(ax=ax, x=epochs, y=hh['lr'], color='g', marker='^', yscale='log', y_axis_name='Learning Rate')
 
     ax.set_xlabel('Epochs')
 
     if savefig:
-        if img_name:
-            plt.savefig(img_name)
-        else:
-            plt.savefig('learning')
+        plt.savefig(img_name)
 
 
 def add_another_y_axis(ax, x, y, color='g', marker='^', yscale='linear', y_axis_name=None):
@@ -283,7 +180,7 @@ def add_another_y_axis(ax, x, y, color='g', marker='^', yscale='linear', y_axis_
     for tl in ax2.get_yticklabels():
         tl.set_color(color)
 
-    legend = ax2.legend(loc='best', prop={'size': legend_font_size})
+    legend = ax2.legend(loc='upper right', prop={'size': legend_font_size})
 
     ymin, ymax = np.min(y)/10.0, np.max(y)*10.0
     ax2.set_ylim([ymin, ymax])
@@ -370,6 +267,15 @@ def discretize(y, bins=5, cutoffs=None, min_count=0, verbose=False):
 
 
 def find_substr(s, substr):
+    """ Find all the occurances of a substring `substr` in `s`.
+
+    Args:
+        s (str): the string
+        substr (str): the substring
+    Returns:
+        indexes (int): Indixes where the substring `substr` start with respect to string `s`
+    """
+    assert len(s) >= len(substr), "The string `s`={} cannot be shorter than `substr`={} in find_substr(). ".format(s, substr)
     indexes = []
     idx = 0
     while idx < len(s):
@@ -382,8 +288,15 @@ def find_substr(s, substr):
     return indexes
 
 
-def tokenize_smiles(samples, tokenization_method='featurize_seq_smiles'):
+def tokenize_smiles(samples, token_method='seq_smiles'):
     """
+    Args:
+        samples (list of strings): list of SMILES strings
+        tokenization_method: determines how the SMILES strings are tokenize
+            method1 ('featurize_seq_generic'):
+            method2 ('featurize_seq_smiles'):
+            method3 (featurize_3d_smiles'):
+
     Description of SMILES elements (wiki, http://opensmiles.org/opensmiles.html):
     Atoms, Bonds, Rings, Aromaticity, Branching, Stereochemistry, Isotopes
 
@@ -414,11 +327,13 @@ def tokenize_smiles(samples, tokenization_method='featurize_seq_smiles'):
     """
     samples_org = samples.copy()
 
+    # Check if a specific symbol appears in the SMILES dataset
+    # symbol = 'Br'
     # for i, s in enumerate(samples):
-    #     if 'Br' in s:
+    #     if symbol in s:
     #         print('{}:  {}'.format(i, s))
 
-    if tokenization_method == 'featurize_seq_generic':
+    if token_method == 'seq_generic':
         tokenizer = Tokenizer(num_words=None, filters='', lower=False, split='', char_level=True)
         tokenizer.fit_on_texts(texts=samples)
         sequences = tokenizer.texts_to_sequences(texts=samples)
@@ -503,10 +418,11 @@ def tokenize_smiles(samples, tokenization_method='featurize_seq_smiles'):
 
         s = ss
 
-        # Split the unsplitted sunbstrings
+        # Split the unsplitted substrings
         k = []
         for substr in s:
-            if len(substr) > 0 and (substr not in elem_long) and ('%' not in substr) and ('[' not in substr) and (']' not in substr):
+            if len(substr) > 0 and (substr not in elem_long) and ('%' not in substr)\
+                    and ('[' not in substr) and (']' not in substr):
                 k.extend(list(substr))
             else:
                 k = k + [substr]
@@ -517,12 +433,12 @@ def tokenize_smiles(samples, tokenization_method='featurize_seq_smiles'):
     tokenizer = Tokenizer(num_words=None, filters='', lower=False, split='_', char_level=False)
     tokenizer.fit_on_texts(texts=samples)
 
-    if tokenization_method == 'featurize_seq_smiles':
+    if token_method == 'seq_smiles':
         # Manual featurization (generates sequences 2-D data)
         sequences = tokenizer.texts_to_sequences(texts=samples)
         x_data = pad_sequences(sequences=sequences, maxlen=None, padding='post', value=0)
 
-    elif tokenization_method == 'featurize_3d_smiles':
+    elif token_method == '3d_smiles':
         # Manual featurization (generates 3-D data)
         token_index = tokenizer.word_index
         max_length = np.max([len(i) for i in samples_org])
@@ -531,9 +447,55 @@ def tokenize_smiles(samples, tokenization_method='featurize_seq_smiles'):
         for sample_id, sample in enumerate(samples):
             for word_id, word in enumerate(sample.split(sep='_')[:max_length]):
                 index = token_index.get(word)
-                x_data[sample_id, word_id, index] = 1.
+                x_data[sample_id, word_id, index] = 1.0
 
     return x_data, tokenizer
+
+
+def save_results(train_scores, val_scores, model_name):
+    """ Save training results collected with k-fold cv into file.
+    Args:
+        train_scores & val_scores (pandas dataframe): each row value represents a train/val score for each epoch;
+            the column names are the recorded performance metrics (e.g., loss, mae, r_square)
+    """
+    metrics = list(train_scores.columns)
+    k_folds = len(train_scores)
+
+    scores_fname = "{}.scores".format(model_name)
+
+    with open(scores_fname, "w") as scores_file:
+        for i, m in enumerate(metrics):
+            scores_file.write("{:<13}Train,  Val\n".format(m))
+            for f in range(len(val_scores)):
+                scores_file.write("  fold {}/{}:  {:=+5.3f}, {:=+5.3f}\n".format(
+                    f + 1, k_folds, train_scores.iloc[f, i], val_scores.iloc[f, i]))
+            scores_file.write("\n")
+
+        scores_file.write("{:<15}Train,  Val\n".format(''))
+        for i, m in enumerate(metrics):
+            scores_file.write("Mean {:<10}{:=+5.3f}, {:=+5.3f}\n".format(m,
+                              train_scores.iloc[:, i].sum() / k_folds, val_scores.iloc[:, i].sum() / k_folds))
+
+
+def print_results(train_scores, val_scores):
+    """ Print training results collected with k-fold cv into file.
+    Args:
+        train_scores & val_scores (pandas dataframe): each row value represents a train/val score for each epoch;
+            the column names are the recorded performance metrics (e.g., loss, mae, r_square)
+    """
+    metrics = list(train_scores.columns)
+    k_folds = len(train_scores)
+
+    for i, m in enumerate(metrics):
+        print("\n{:<13}Train,  Val".format(m))
+        for f in range(len(val_scores)):
+            print("  fold {}/{}:  {:=+5.3f}, {:=+5.3f}".format(f + 1, k_folds, train_scores.iloc[f, i],
+                                                                               val_scores.iloc[f, i]))
+
+    print("\n{:<15}Train,  Val".format(''))
+    for i, m in enumerate(metrics):
+        print("Mean {:<10}{:=+5.3f}, {:=+5.3f}".format(m, train_scores.iloc[:, i].sum() / k_folds,
+                                                          val_scores.iloc[:, i].sum() / k_folds))
 
 
 def create_dense_model(n_features, optimizer='adam', loss='mae', initializer='glorot_uniform', metrics=None):
@@ -559,122 +521,78 @@ def create_dense_model(n_features, optimizer='adam', loss='mae', initializer='gl
     return model
 
 
-def create_rnn_with_lconc(n_features, method='Conv1D', optimizer='adam', loss='mae', initializer='glorot_uniform',
-                          metrics=None, data_dim=None, embd_input_dim=None, embd_output_dim=None):
-    """ Create an rnn/conv1d net.
-    This architecture takes smiles strings and lconc.
-
-    The loss drop in rnn models is very slow! Test with alternative optimizations algs!
+def create_rnn_with_lconc(input_shape, layer='Conv1D', optimizer='adam', loss='mae', initializer='glorot_uniform',
+                          metrics=None, data_dim=None, embed_input_dim=None, embed_output_dim=None,
+                          model_fig_name='model'):
+    """ Create a sequence learning NN (RNN or Conv1D).
+    This architecture takes SMILES strings and LCONC.
     """
+    # Define input layer for SMILES data
     if data_dim == 2:
-        smiles_input = Input(shape=(n_features,), dtype=np.float32, name='smiles_input')
-        x = layers.Embedding(input_dim=embd_input_dim, output_dim=embd_output_dim)(smiles_input)
+        smiles_input = Input(shape=input_shape, dtype=np.float32, name='smiles_input')
+        x = Embedding(input_dim=embed_input_dim, output_dim=embed_output_dim)(smiles_input)
     elif data_dim == 3:
-        smiles_input = Input(shape=(None, n_features), dtype=np.float32, name='smiles_input')
+        smiles_input = Input(shape=input_shape, dtype=np.float32, name='smiles_input')
         x = smiles_input
 
-    method = method.lower()
-    if method == 'lstm':
-        x = layers.LSTM(units=128, recurrent_dropout=0.1, activation='relu', return_sequences=True)(x)
-        #x = layers.LSTM(units=64, recurrent_dropout=0.1, activation='relu', return_sequences=True)(x)
-        smiles_output = layers.LSTM(units=128, recurrent_dropout=0.1, activation='relu')(x)
-    elif method == 'gru':
-        x = layers.Bidirectional(layers.GRU(32, activation='relu', return_sequences=True))(x)
-        x = layers.GRU(units=64, activation='relu', return_sequences=True)(x)
-        smiles_output = layers.GRU(units=64, activation='relu')(x)
-    elif method == 'conv1d':
-        x = layers.Conv1D(filters=256, kernel_size=13, activation='relu', kernel_initializer=initializer)(x)
-        x = layers.BatchNormalization()(x)
-        x = layers.MaxPooling1D(9)(x)
-        x = layers.Conv1D(filters=256, kernel_size=13, activation='relu', kernel_initializer=initializer)(x)
-        x = layers.BatchNormalization()(x)
-        smiles_output = layers.GlobalMaxPooling1D()(x)
-
-    smiles_output = layers.Dense(units=64, activation='relu')(smiles_output)
-    # smiles_output = layers.BatchNormalization()(smiles_output)
-    smiles_output = layers.Dense(units=32, activation='relu')(smiles_output)
-    # smiles_output = layers.BatchNormalization()(smiles_output)
-    smiles_output = layers.Dense(units=16, activation='relu')(smiles_output)
-    # smiles_output = layers.BatchNormalization()(smiles_output)
-    smiles_output = layers.Dense(units=8, activation='relu')(smiles_output)
-    # smiles_output = layers.BatchNormalization()(smiles_output)
-
-    # TODO: put a higher weight on lconc --> maybe based on output from skwrapper.py
+    # Define input layer for LCONC
     lconc_input = Input(shape=(1,), dtype=np.float32, name='lconc_input')
 
-    # Concatenate smiles and lconc
+    # Define the sequence processing layers for SMILES data
+    layer = layer.lower()
+    if layer == 'lstm':
+        x = LSTM(units=32, recurrent_dropout=0.1, activation='relu', return_sequences=True)(x)
+        # x = LSTM(units=32, recurrent_dropout=0.1, activation='relu', return_sequences=True)(x)
+        x = LSTM(units=32, recurrent_dropout=0.1, activation='relu')(x)
+
+    elif layer == 'gru':
+        # x = Bidirectional(GRU(units=32, activation='relu', return_sequences=True))(x)
+        x = GRU(units=32, activation='relu', return_sequences=True)(x)
+        x = GRU(units=32, activation='relu')(x)
+
+    elif layer == 'conv1d':
+        x = Conv1D(filters=64, kernel_size=21, activation='relu', kernel_initializer=initializer)(x)
+        x = MaxPooling1D(pool_size=9)(x)
+        x = Conv1D(filters=64, kernel_size=21, activation='relu', kernel_initializer=initializer)(x)
+        x = MaxPooling1D(pool_size=9)(x)
+        # x = Conv1D(filters=64, kernel_size=13, activation='relu', kernel_initializer=initializer)(x)
+        # x = MaxPooling1D(pool_size=3)(x)
+        # smiles_output = GlobalMaxPooling1D()(x)
+        x = Flatten()(x)
+
+    # Layers after SMILES processing
+    x = Dense(units=256, activation=None, kernel_initializer=initializer)(x)
+    x = BatchNormalization()(x)
+    x = Activation('relu')(x)
+    x = Dense(units=256, activation=None, kernel_initializer=initializer)(x)
+    x = BatchNormalization()(x)
+    x = Activation('relu')(x)
+    x = Dense(units=256, activation=None, kernel_initializer=initializer)(x)
+    x = BatchNormalization()(x)
+    smiles_output = Activation('relu')(x)
+
+    # Concatenate SMILES and LCONC
     concatenated = layers.concatenate([smiles_output, lconc_input], axis=-1)
 
-    # Add layer on top after concatenation
-    x = layers.Dense(units=16, activation='relu', kernel_initializer=initializer)(concatenated)
-    x = layers.BatchNormalization()(x)
-    x = layers.Dense(units=8, activation='relu', kernel_initializer=initializer)(x)
-    output = layers.Dense(units=1, kernel_initializer=initializer)(x)
+    # Layers after concatenation
+    x = Dense(units=256, activation=None, kernel_initializer=initializer)(concatenated)
+    x = BatchNormalization()(x)
+    x = Activation('relu')(x)
+    # x = Dropout(0.5)(x)
+    x = Dense(units=256, activation=None, kernel_initializer=initializer)(x)
+    x = BatchNormalization()(x)
+    x = Activation('relu')(x)
+    # x = Dropout(0.5)(x)
+
+    # Output layer
+    output = Dense(units=1, kernel_initializer=initializer)(x)
 
     # Instantiate model and compile
     model = Model(inputs=[smiles_input, lconc_input], outputs=[output])
     model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
+
+    # Save model schematic (building blocks)
+    plot_model(model, to_file=model_fig_name+'.png', show_shapes=True)
     return model
 
 
-
-'''
-# ======================================================================================================================
-# Leftovers
-# ======================================================================================================================
-'''
-# ======================================================================================================================
-# k-fold with manual split - approach 1
-# ======================================================================================================================
-# k_folds = 5
-# kf = sklearn.model_selection.KFold(n_splits=k_folds, random_state=0)
-#
-# # Generate train and val indexes for k-fold CV
-# tr_idx = []
-# vl_idx = []
-# num_val_samples = len(X) // k_folds
-# for f, (train_idx, val_idx) in enumerate(kf.split(X)):
-#     tr_idx.append(train_idx)
-#     vl_idx.append(val_idx)
-#
-# # Permute the order of folds
-# folds_order = np.random.permutation(range(k_folds))
-# print("\nFolds order: {}".format(folds_order))
-#
-# # Run k-fold CV
-# hs = dict()
-# for f, i in enumerate(folds_order):
-#     print("\nFold {} out of {}".format(f + 1, k_folds))
-#     print("Train idx:  {}".format(tr_idx[i]))
-#     print("Val idx:    {}".format(vl_idx[i]))
-#
-#     # Split the data
-#     x_train, x_val = X[tr_idx[i], :], X[vl_idx[i], :]
-#     y_train, y_val = Y[tr_idx[i]], Y[vl_idx[i]]
-#
-#     model = build_model()
-#     scores = model.fit()
-
-
-# ======================================================================================================================
-# k-fold with manual split - approach 1
-# ======================================================================================================================
-# k_folds = 5
-# kf = sklearn.model_selection.KFold(n_splits=k_folds, random_state=0)
-#
-# num_val_samples = len(X) // k_folds
-# for f in range(k_folds):
-#     print("\nFold {} out of {}".format(f + 1, k_folds))
-#
-#     # get val indexes
-#     print('Val indices: [{}, {})'.format(num_val_samples * f, num_val_samples * (f + 1)))
-#     tmp = np.arange(num_val_samples * f, num_val_samples * (f + 1))
-#     val_idx = np.zeros((X.shape[0], ), dtype=np.bool)
-#     val_idx[tmp] = True
-#
-#     # split train and val
-#     x_train, x_val = X[~val_idx, :], X[val_idx, :]  # get train and val indexes for smiles
-#     y_train, y_val = Y[~val_idx], Y[val_idx]  # get train and val indexes for lconc
-#
-#     model = build_model()
-#     scores = model.fit()

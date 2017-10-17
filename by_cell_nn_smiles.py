@@ -1,35 +1,42 @@
+from __future__ import print_function
 import os
 import sys
 import time
 import numpy as np
 import pandas as pd
+from argparser_nn import get_parser
+
+from sklearn.model_selection import KFold, StratifiedKFold, StratifiedShuffleSplit
+
+import keras
+from keras import optimizers, losses, initializers
 
 from utils import ap_utils
+
+
+# Choose a GPU
+import matplotlib
+matplotlib.use('Agg')
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+import matplotlib.pyplot as plt  # this shuold be invoked after os.environ[]
+
+
+# Initialize the parser
+description = 'Build neural net (sequence processing) to process SMILES strings for drug response prediction.'
+parser = get_parser(description)
+args = parser.parse_args()
 
 seed = [0, 100, 2017]
 np.random.seed(seed[0])
 
-# TODO check why this one doesn't work
-# Check for gpu and specify which to use
-# ap_utils.choose_gpu(use_devices='single', verbose=True)
-
-import matplotlib
-matplotlib.use('Agg')
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
-import matplotlib.pyplot as plt
-
-# file_path = os.path.dirname(os.path.realpath(__file__))  # dirname returns the directory name of pathname
-# lib_path = os.path.abspath(os.path.join(file_path, '..', 'utils'))  # abspath returns the normalized absolutized version of the pathname
-# sys.path.append(lib_path)
 
 # Load data
-root_dir = os.getcwd()
-data_name = 'smiles'
-data_file_name = 'BR:MCF7_smiles.csv'
+root_dir = os.path.dirname(os.path.realpath(__file__))
+# root_dir = os.getcwd()
+data_file_name = args.file  # 'BR:MCF7_smiles.csv'
 data_file_path = os.path.join(root_dir, data_file_name)
 
-assert os.path.exists(data_file_path), "The path {} was not found.".format(data_file_path)
+assert os.path.exists(data_file_path), "The following path was not found:  {}".format(data_file_path)
 data = pd.read_csv(data_file_path)
 
 # from datasets import NCI60
@@ -38,9 +45,9 @@ data = pd.read_csv(data_file_path)
 print('\nTotal SMILES strings: {}'.format(len(data['SMILES'])))
 print('Total SMILES strings (unique): {}'.format(len(data['SMILES'].unique())))
 
-smiles_len = data['SMILES'].apply(len)  # the vector smiles_len contains the length of smiles strings
 
-# Remove smiles if they are too short/large
+# Remove SMILES if they are too short/large
+smiles_len = data['SMILES'].apply(len)  # the vector smiles_len contains the length of smiles strings
 data = ap_utils.filter_on_smiles_len(data=data, smiles_len=smiles_len, thres_min=None, thres_max=None)
 
 # Shuffle the dataset
@@ -48,12 +55,12 @@ if data.index.name:
     data = data.reset_index()
 new_index = np.random.permutation(data.index)
 data = data.reindex(index=new_index)
-# or, for not a dataframe -->
+# or, if not a dataframe -->
 #np.random.shuffle(data)
 print('\n{}'.format(data.head()))
 
 # Remove NSC column
-# data = data.loc[:, data.columns != 'NSC']  # TODO: see if NSC affects/helps predictions
+# data = data.loc[:, data.columns != 'NSC']  # TODO: check if NSC helps prediction
 
 # Drop duplicates
 # data = data.drop_duplicates()
@@ -64,13 +71,10 @@ print('\n{}'.format(data.head()))
 Prepare the data (tokenize)
 ========================================================================================================================
 '''
-from keras.preprocessing.text import Tokenizer
-from keras.preprocessing.sequence import pad_sequences
-
 samples = [s for s in data['SMILES']]
 
 # ===============================================
-# # Canocalization: remove invalid SMILES based on CDK library
+# TODO: Canocalization: remove invalid SMILES based on CDK library
 # from rdkit import Chem
 # # smis = ["CN2C(=O)N(C)C(=O)C1=C2N=CN1C", "CN1C=NC2=C1C(=O)N(C)C(=O)N2C"]
 # # problematic: 813
@@ -87,20 +91,22 @@ samples = [s for s in data['SMILES']]
 # samples = smis
 # ===============================================
 
-# tokenization_method = 'featurize_seq_smiles'
-tokenization_method = 'featurize_3d_smiles'
-X, tokenizer = ap_utils.tokenize_smiles(samples, tokenization_method=tokenization_method)
+token_method = args.token  # 'seq_generic', 'seq_smiles', '3d_smiles'
+X, tokenizer = ap_utils.tokenize_smiles(samples, token_method=token_method)
 
-# Extract LCONC (another input feature in addition to SMILES sequences) and GROWTH (response var)
+# Bound the values of GROWTH to [-1, 1]
+data['GROWTH'] = data['GROWTH'].apply(lambda x: -1 if x < -1 else x)
+data['GROWTH'] = data['GROWTH'].apply(lambda x: 1 if x > 1 else x)
+
+# Extract LCONC (will be concatenated with SMILES as input to NN) and GROWTH (response var)
 X_lconc = data['LCONC'].values.reshape(-1, 1)
 Y = data['GROWTH'].values
-print("Y = {} +- {}".format(np.mean(Y), np.std(Y)))
 
 # Discretize the response variable y
 y_even, thresholds, _ = ap_utils.discretize(y=Y, bins=5, cutoffs=None, min_count=0, verbose=False)
 
 # Print shape
-print('X shape {}'.format(X.shape))
+print('\nX shape {}'.format(X.shape))
 print('X_lconc shape {}'.format(X_lconc.shape))
 print('Y shape {}'.format(y_even.shape))
 
@@ -111,56 +117,58 @@ Train NN
 ========================================================================================================================
 '''
 t0 = time.time()
-from sklearn.model_selection import KFold, StratifiedKFold, StratifiedShuffleSplit
+model_name = args.name  # 'model'
 
-import keras
-from keras import optimizers, losses, initializers
-
-# Remove duplicates
-# Since we're using only smiles strings, we want to remove all string dupicates
+# Remove duplicates (if we use only SMILES w/o LCONC)
 # _, idx = np.unique(X, axis=0, return_index=True)  # np.unique returns sorted unique values
 # idx = np.sort(idx)  # by applying np.sort, we re-sort based on the original indexes
 # x_train = X[idx, :]
 # y_train = Y[idx]
-# print('x_train shape {}'.format(x_train.shape))
-# print('y_train shape {}'.format(y_train.shape))
 
-# Embedding parameters
-if tokenization_method == 'featurize_3d_smiles':
-    embd_input_dim = None
-    embd_output_dim = None
+# Input shape (involves embedding parameters)
+maxlen = X.shape[1]  # smiles_len.max()
+vocab_size = len(tokenizer.word_index) + 1
+if token_method == '3d_smiles':
+    embed_input_dim = None
+    embed_output_dim = None
+    input_shape = (maxlen, vocab_size,)
 else:
-    vocabsize = len(tokenizer.word_index)  # total number of unique characters in the dataset
-    embd_input_dim = vocabsize + 1  # input dimnesion of the embedding layer
-    embd_output_dim = 16  # output dimnesion of the embedding layer
-    maxlen = smiles_len.max()  # length of input sequences (required if Flatten or Dense is used at some point after embedding)
+    embed_input_dim = vocab_size  # input dimnesion of embedding layer
+    embed_output_dim = 16  # output dimnesion of embedding layer
+    input_shape = (maxlen,)
+
+print('\nembd_input_dim: {}'.format(embed_input_dim))
+print('embd_output_dim: {}'.format(embed_output_dim))
+print('input_shape: {}'.format(input_shape))
 
 # Metrics
-#metrics = ['mae']
 metrics = [ap_utils.r_square]
 
 # Hyperparameters
-initializer = initializers.glorot_uniform()
+initializer = initializers.glorot_uniform(seed=seed[0])
 loss = losses.mae
-epochs = 100
-batch_size = 128
-k_folds = 5
+epochs = args.epochs  # 20
+batch_size = args.batch  # 128
+k_folds = args.cv  # 5
+layer = args.layer  # 'conv1d'
 
 # Callbacks
 callbacks = []
 callbacks.append(keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=7, verbose=True))
 
-# Run k-fold CV
+# k-fold CV scheme
 if k_folds == 1:
     skf = StratifiedShuffleSplit(n_splits=k_folds, test_size=0.2, random_state=seed[0])
 else:
     skf = StratifiedKFold(n_splits=k_folds, shuffle=True, random_state=seed[0])
 
+# Run k-fold CV
 hs = dict()
-train_scores, val_scores = [], []
-tests, preds = None, None
 best_model = None
+best_model_id = 0
 best_score = -np.Inf
+train_scores = pd.DataFrame(data=np.zeros((k_folds, len(metrics)+1)))
+val_scores = pd.DataFrame(data=np.zeros((k_folds, len(metrics)+1)))
 
 for f, (train_idx, val_idx) in enumerate(skf.split(X, y_even)):
     print("\nFold {} out of {}".format(f + 1, k_folds))
@@ -176,37 +184,58 @@ for f, (train_idx, val_idx) in enumerate(skf.split(X, y_even)):
     # Split the data
     x_train, x_val = X[train_idx], X[val_idx]
     y_train, y_val = Y[train_idx], Y[val_idx]
-    x_train_lconc, x_lconc_val = X_lconc[train_idx], X_lconc[val_idx]
+    x_train_lconc, x_val_lconc = X_lconc[train_idx], X_lconc[val_idx]
 
     # Create model
-    #optimizer = optimizers.RMSprop(lr=0.001, rho=0.9, epsilon=1e-08, decay=0)
+    # optimizer = optimizers.SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
+    # optimizer = optimizers.RMSprop(lr=0.001, rho=0.9, epsilon=1e-08, decay=0)
     optimizer = optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.0)
-    model = ap_utils.create_rnn_with_lconc(n_features=X.shape[-1], method='Conv1D', optimizer=optimizer,
+    model = ap_utils.create_rnn_with_lconc(input_shape=input_shape, layer=layer, optimizer=optimizer,
                                            loss=loss, initializer=initializer, metrics=metrics,
                                            data_dim=len(X.shape),
-                                           embd_input_dim=embd_input_dim, embd_output_dim=embd_output_dim)
+                                           embed_input_dim=embed_input_dim, embed_output_dim=embed_output_dim,
+                                           model_fig_name=model_name)
 
     # Train model
     history = model.fit(x=[x_train, x_train_lconc], y=y_train,
-                        validation_data=([x_val, x_lconc_val], y_val),
+                        validation_data=([x_val, x_val_lconc], y_val),
                         epochs=epochs, batch_size=batch_size, verbose=1, callbacks=callbacks)
-    hs[f] = history.history
-    # hs[f] = history
+    hs[f] = history
 
     # Store scores
-    train_score = model.evaluate(x=[x_train, x_train_lconc], y=y_train, batch_size=batch_size, verbose=True)
-    val_score = model.evaluate(x=[x_val, x_lconc_val], y=y_val, batch_size=batch_size, verbose=True)
-    train_scores.append(train_score)
-    val_scores.append(val_score)
+    train_scores.iloc[f, :] = model.evaluate(x=[x_train, x_train_lconc], y=y_train, batch_size=batch_size, verbose=False)
+    val_scores.iloc[f, :] = model.evaluate(x=[x_val, x_val_lconc], y=y_val, batch_size=batch_size, verbose=False)
 
-    # print("  fold {}/{}: score = {:.3f}".format(f + 1, k_folds, val_score))
-    # if val_score > best_score:
-    #     best_model = model
+    # Save the best model based on loss
+    if val_scores.iloc[f, 0] > best_score:
+        best_score = val_scores.iloc[f, 0]
+        best_model = model
+        best_model_id = f
 
-print("\nRunning time: {:.2f} minutes.\n".format((time.time() - t0)/60))
+train_scores.columns = ap_utils.get_performance_metrics(history)
+val_scores.columns = ap_utils.get_performance_metrics(history)
 
+
+'''
+========================================================================================================================
+Summarize results
+========================================================================================================================
+'''
 print(model.summary())
 
+print("\nRunning time: {:.2f} minutes.".format((time.time() - t0)/60))
+
+# Save scores into file
+ap_utils.save_results(train_scores, val_scores, model_name)
+
+# Print scores
+ap_utils.print_results(train_scores, val_scores)
+
 # Plot loss vs epochs (averaged over k folds)
-ap_utils.plot_learning_kfold(hs, history, savefig=True, img_name='holdoutfold_1dccc_mae_orgtoken_postpad_add_dense')
+ap_utils.plot_learning_kfold(hs, savefig=True, img_name=model_name + '_learn_kfold')
+ap_utils.plot_learning(hs[best_model_id], savefig=True, img_name=model_name + '_learning_lr')
+
+# Save model
+model.save(model_name+'.h5')
+
 
