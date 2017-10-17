@@ -1,11 +1,13 @@
 from __future__ import print_function
 
+import matplotlib
+matplotlib.use('Agg')
+
 import os
 import sys
 
 from datasets import NCI60
 from argparser import get_parser
-
 
 description = 'Save dataframes to CSV files.'
 parser = get_parser(description)
@@ -14,9 +16,10 @@ parser.add_argument("--by", default='drug', choices=['cell', 'drug'],
                     help='generate dataframes for by cell or by drug problems')
 parser.add_argument("--float_format", default='%.4g',
                     help='csv float format')
+
 # https://docs.python.org/3.6/library/argparse.html#argparse.ArgumentParser.parse_args  # (ap)
 args = parser.parse_args()
-# print(type(args));  # (ap)
+
 sys.stdout = sys.stderr
 # print('Args:', args, end='\n\n')
 
@@ -24,7 +27,7 @@ if not os.path.exists(args.out_dir):
     os.makedirs(args.out_dir)
 
 if args.by == 'cell':
-    print('Cell features:', args.cell_features)
+    print('Cell features:', args.cell_features)  # (ap) why do we print this?? this doesn't affect anything in this case
     cells = NCI60.all_cells() if 'all' in args.cells else args.cells
     for cell in cells:
         print(cell + ':', end=' ')

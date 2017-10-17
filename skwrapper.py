@@ -54,6 +54,10 @@ def get_model(model_or_name, threads=-1, classification=False):
         'rf.10k': (RandomForestClassifier(n_estimators=10000, n_jobs=threads), 'RandomForestClassifier.10K')
     }
 
+    neural_network_model = {
+
+    }  # (ap) see how we can integrate neural network models into this framework
+
     if isinstance(model_or_name, str):
         if classification:
             model_and_name = classification_models.get(model_or_name.lower())
@@ -78,10 +82,10 @@ def score_format(metric, score, signed=False, eol=''):
 
 
 def top_important_features(model, feature_names, n_top=1000):
-    if hasattr(model, "booster"): # XGB
+    if hasattr(model, "booster"):  # XGB
         fscore = model.booster().get_fscore()
         fscore = sorted(fscore.items(), key=operator.itemgetter(1), reverse=True)
-        features = [(v, feature_names[int(k[1:])]) for k,v in fscore]
+        features = [(v, feature_names[int(k[1:])]) for k, v in fscore]
         top = features[:n_top]
     else:
         if hasattr(model, "feature_importances_"):

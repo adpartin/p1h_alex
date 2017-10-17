@@ -22,12 +22,17 @@ def get_parser(description=None):
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("-c", "--cell_features", nargs='+', default=CELL_FEATURES, metavar='CELL_FEATURES',
                         choices=['expression', 'mirna', 'proteome', 'all', 'expression_5platform'],
-                        help="use one or more cell line feature sets: 'expression', 'mirna', 'proteome', 'all'; use all for ['expression', 'mirna', 'proteome']")
+                        help="use one or more cell line feature sets: 'expression', 'mirna', 'proteome', 'all'; "
+                             "use all for ['expression', 'mirna', 'proteome']")
     parser.add_argument("-d", "--drug_features", nargs='+', default=DRUG_FEATURES, metavar='DRUG_FEATURES',
-                        choices=['descriptors', 'latent', 'all', 'noise'],
-                        help="use dragon7 descriptors, latent representations from Aspuru-Guzik's SMILES autoencoder, or both, or random features; 'descriptors','latent', 'all', 'noise'")
+                        choices=['descriptors', 'latent', 'all', 'noise', 'smiles'],  # (ap) added smiles
+                        help="use dragon7 descriptors, latent representations from Aspuru-Guzik's SMILES autoencoder, "
+                             "or both, SMILES strigns, or random features; 'descriptors', 'latent', 'all', 'smiles', "
+                             "'noise'")  # (ap) added smiles
     parser.add_argument("-m", "--models", nargs='+', default=MODELS,
-                        help="list of regression models: XGBoost, XGB.1K, XGB.10K, RandomForest, RF.1K, RF.10K, AdaBoost, Linear, ElasticNet, Lasso, Ridge; or list of classification models: XGBoost, XGB.1K, XGB.10K, RandomForest, RF.1K, RF.10K, AdaBoost, Logistic, Gaussian, Bayes, KNN, SVM")
+                        help="list of regression models: XGBoost, XGB.1K, XGB.10K, RandomForest, RF.1K, RF.10K, AdaBoost, "
+                             "Linear, ElasticNet, Lasso, Ridge; or list of classification models: XGBoost, XGB.1K, "
+                             "XGB.10K, RandomForest, RF.1K, RF.10K, AdaBoost, Logistic, Gaussian, Bayes, KNN, SVM")
     parser.add_argument("--cells", nargs='+', default=CELLS,
                         help="list of cell line names")
     parser.add_argument("--drugs", nargs='+', default=DRUGS,
@@ -52,7 +57,8 @@ def get_parser(description=None):
                         help="use NCI GI50 value instead of percent growth at log concentration levels")
     parser.add_argument("--scaling", default=SCALING, metavar='SCALING',
                         choices=['minabs', 'minmax', 'std', 'none'],
-                        help="type of feature scaling; 'minabs': to [-1,1]; 'minmax': to [0,1], 'std': standard unit normalization; 'none': no normalization")
+                        help="type of feature scaling; 'minabs': to [-1,1]; 'minmax': to [0,1], 'std': standard unit"
+                             "normalization; 'none': no normalization")
     parser.add_argument("--subsample", default=SUBSAMPLE, metavar='SUBSAMPLE',
                         choices=['naive_balancing', 'none'],
                         help="dose response subsample strategy; 'none' or 'naive_balancing'")
@@ -61,3 +67,4 @@ def get_parser(description=None):
     parser.add_argument("-o", "--out_dir", default=OUT_DIR,
                         help="output directory")
     return parser
+

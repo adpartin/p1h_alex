@@ -7,16 +7,18 @@ import sys
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 from sklearn.preprocessing import Imputer
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, MaxAbsScaler
 
-file_path = os.path.dirname(os.path.realpath(__file__))
-lib_path = os.path.abspath(os.path.join(file_path, '..', 'utils'))
+from data_exploration import *  # (ap)
+
+file_path = os.path.dirname(os.path.realpath(__file__))  # dirname returns the directory name of pathname
+lib_path = os.path.abspath(os.path.join(file_path, '..', 'utils'))  # abspath returns the normalized absolutized version of the pathname
 sys.path.append(lib_path)
 
 from data_utils import get_file
-
 
 global_cache = {}
 
@@ -29,12 +31,11 @@ def impute_and_scale(df, scaling='std'):
 
     Parameters
     ----------
-    df : pandas dataframe
+    df: pandas dataframe
         dataframe to impute and scale
-    scaling : 'maxabs' [-1,1], 'minmax' [0,1], 'std', or None, optional (default 'std')
+    scaling: 'maxabs' [-1,1], 'minmax' [0,1], 'std', or None, optional (default 'std')
         type of scaling to apply
     """
-
     df = df.dropna(axis=1, how='all')
 
     imputer = Imputer(strategy='mean', axis=0)
@@ -78,99 +79,41 @@ def describe_response_data(df, cells=['all'], drugs=['A'], doses=[-5, -4]):
 
 def load_dose_response(min_logconc=-4., max_logconc=-4., subsample=None, fraction=False):
     """Load cell line response to different drug compounds, sub-select response for a specific
-        drug log concentration range and return a pandas dataframe.
+    drug log concentration range and return a pandas dataframe.
 
     Parameters
     ----------
-    min_logconc : -3, -4, -5, -6, -7, optional (default -4)
+    min_logconc: -3, -4, -5, -6, -7, optional (default -4)
         min log concentration of drug to return cell line growth
-    max_logconc : -3, -4, -5, -6, -7, optional (default -4)
+    max_logconc: -3, -4, -5, -6, -7, optional (default -4)
         max log concentration of drug to return cell line growth
     subsample: None, 'naive_balancing' (default None)
         subsampling strategy to use to balance the data based on growth
     fraction: bool (default False)
         divide growth percentage by 100
     """
-
     path = get_file(P1B3_URL + 'NCI60_dose_response_with_missing_z5_avg.csv')
 
     df = global_cache.get(path)
     if df is None:
-        df = pd.read_csv(path, sep=',', engine='c',
-                         na_values=['na', '-', ''],
-                         dtype={'NSC':object, 'CELLNAME':str, 'LOG_CONCENTRATION':np.float32, 'GROWTH':np.float32})
+        df = pd.read_csv(path, sep=',', engine='c', na_values=['na', '-', ''],
+                         dtype={'NSC': object, 'CELLNAME': str, 'LOG_CONCENTRATION': np.float32, 'GROWTH': np.float32})
         global_cache[path] = df
 
-    '''
-    # (ap)
-    #print("saving data...")
-    #df.to_csv('raw_data.csv')
-    import matplotlib.pyplot as plt
-    import numpy as np
+    # (ap) =========================
+    # Remove samples if LCONC or GROWTH are na
+    na_index = (df['LOG_CONCENTRATION'].isnull()) | (df['GROWTH'].isnull())
+    print('\n{} out of {} samples were removed from NCI60 dataset '
+          '(where LCONC or GROWTH are na).'.format(na_index.sum(), len(df)))
+    df = df.loc[~na_index, :]
+    # (ap) =========================
 
-    nan_index = df['LOG_CONCENTRATION'].isnull() & df['GROWTH'].isnull()
-    df = df.loc[ ~(nan_index) ]
-    print('A total of {} drug observations were removed from original dataset (when LCONC or GROWTH is nan).'.format(nan_index.sum()))
-
-    # Save LCONC hist
-    plt.figure(); plt.hist(df['LOG_CONCENTRATION'], bins=30)
-    plt.xlabel('Bins'); plt.ylabel('Freq')
-    plt.title('LCONC histogram (raw) [{:.2f}, {:.2f}]'.format(df['LOG_CONCENTRATION'].min(), df['LOG_CONCENTRATION'].max()))
-    plt.grid("on")
-    plt.savefig('lconc_hist_raw')
-
-    # Save GRWOTH hist
-    plt.figure(); plt.hist(df['GROWTH'], bins=30)
-    plt.xlabel('Bins'); plt.ylabel('Freq')
-    plt.title('GROWTH histogram (raw) [{:.2f}, {:.2f}]'.format(df['GROWTH'].min(), df['GROWTH'].max()))
-    plt.grid('on')
-    plt.savefig('growth_hist_raw')
-
-    # Check some outliers
-    print('Check for outliers (consider remove and analyze separetly).')
-    low_conc_val = -7
-    high_conc_val = -3
-    low_conc = df.loc[ df['LOG_CONCENTRATION'] <= low_conc_val, 'GROWTH']
-    high_conc = df.loc[ df['LOG_CONCENTRATION'] >= high_conc_val, 'GROWTH']
-    print("(low conc) LCONC<={}, GROWTH_range=[{:.2f}, {:.2f}]".format(low_conc_val, low_conc.min(), low_conc.max()))
-    print("(high conc) LCONC>={}, GROWTH_range=[{:.2f}, {:.2f}]".format(high_conc_val, high_conc.min(), high_conc.max()))
-    print("(low conc) LCONC<={}, GROWTH_range<=-0.2, total: {} obs ==> very effective?".format(low_conc_val, (low_conc<=-0.2).sum() ))
-    print("(high conc) LCONC>={}, GROWTH_range>=0.2, total: {} obs ==> not effective?".format(high_conc_val, (high_conc>=0.2).sum() ))
-
-
-    # Save LCONC vs GROWTH (can't plot so many points)
-#    plt.figure(); plt.scatter(df['LOG_CONCENTRATION'], df['GROWTH'])
-#    plt.xlabel('LCONC'); plt.ylabel('GROWTH')
-#    plt.title('GROWTH histogram (raw) [{:.2f}, {:.2f}]'.format(df['GROWTH'].min(), df['GROWTH'].max()))
-#    plt.grid('on')
-#    plt.savefig('LCONC_vs_GROWTH')
-
-    # Plot distribution of LCONC levels
-    LCONC_levels = [-8, -7, -6, -5, -4, -3]
-    level_elements = []
-    xticklabels = []
-    for i in range(len(LCONC_levels)+1):
-        print('i={}'.format(i))
-        if i==0:
-            dd = df.loc[df['LOG_CONCENTRATION'] <= LCONC_levels[i], 'GROWTH']
-            xticklabels.append('(,{}]'.format(LCONC_levels[i]))
-        elif i==len(LCONC_levels):
-            dd = df.loc[df['LOG_CONCENTRATION'] >= LCONC_levels[i-1], 'GROWTH']
-            xticklabels.append('({},)'.format(LCONC_levels[i-1]))
-        else:
-            dd = df.loc[(df['LOG_CONCENTRATION'] >= LCONC_levels[i-1]) & (df['LOG_CONCENTRATION'] <= LCONC_levels[i]), 'GROWTH']
-            xticklabels.append('({},{}]'.format(LCONC_levels[i-1], LCONC_levels[i]))
-        level_elements.append(len(dd))
-
-    plt.figure()
-    pos = np.arange(len(LCONC_levels)+1)
-    plt.bar( pos, level_elements, align='center' )
-    plt.xticks(pos, xticklabels)
-    plt.savefid('hist_lconc_levels')
-    # (ap)
-    '''
+    df_len = len(df)  # (ap)
 
     df = df[(df['LOG_CONCENTRATION'] >= min_logconc) & (df['LOG_CONCENTRATION'] <= max_logconc)]
+
+    print('{} out of {} samples were removed from NCI60 dataset based on the logconc range.'.format(
+        df_len-len(df), df_len))  # (ap)
 
     df = df[['NSC', 'CELLNAME', 'GROWTH', 'LOG_CONCENTRATION']]
 
@@ -191,58 +134,98 @@ def load_dose_response(min_logconc=-4., max_logconc=-4., subsample=None, fractio
 
 def load_drug_descriptors(ncols=None, scaling='std', add_prefix=True):
     """Load drug descriptor data, sub-select columns of drugs descriptors
-        randomly if specificed, impute and scale the selected data, and return a
-        pandas dataframe.
+    randomly if specified, impute and scale the selected data, and return a
+    pandas dataframe.
 
     Parameters
     ----------
-    ncols : int or None
+    ncols: int or None
         number of columns (drugs descriptors) to randomly subselect (default None : use all data)
-    scaling : 'maxabs' [-1,1], 'minmax' [0,1], 'std', or None, optional (default 'std')
+    scaling: 'maxabs' [-1,1], 'minmax' [0,1], 'std', or None, optional (default 'std')
         type of scaling to apply
     add_prefix: True or False
         add feature namespace prefix
     """
-
     path = get_file(P1B3_URL + 'descriptors.2D-NSC.5dose.filtered.txt')
 
     df = global_cache.get(path)
     if df is None:
-        df = pd.read_csv(path, sep='\t', engine='c',
-                         na_values=['na','-',''],
-                         dtype=np.float32)
+        df = pd.read_csv(path, sep='\t', engine='c', na_values=['na', '-', ''], dtype=np.float32)
         global_cache[path] = df
 
-    df1 = pd.DataFrame(df.loc[:,'NAME'].astype(int).astype(str))
+    df1 = pd.DataFrame(df.loc[:, 'NAME'].astype(int).astype(str))
     df1.rename(columns={'NAME': 'NSC'}, inplace=True)
 
-    df2 = df.drop('NAME', 1)
+    df2 = df.drop('NAME', axis=1)
     if add_prefix:
         df2 = df2.add_prefix('dragon7.')
 
+    # Extract a random subset of features
     total = df2.shape[1]
     if ncols and ncols < total:
         usecols = np.random.choice(total, size=ncols, replace=False)
-        df2 = df2.iloc[:,usecols]
+        df2 = df2.iloc[:, usecols]
 
-    df2 = impute_and_scale(df2, scaling)
+    # df2.to_csv('df2_dragon7.csv')  # (ap) save to explore the data
+
+    # print('Using impute_and_scale() function.')
+    # df2 = impute_and_scale(df2, scaling)  # (ap) trying something different
+
+    # (ap) =========================
+    print('Using new preprocessing scheme.')
+    df2, drugs_removed = drop_missing_rows(df2, thres_frac=0.99, verbose=True)
+    df2, feats_removed = drop_missing_cols(df2, thres_frac=0.99, verbose=True)
+    dfc, dfd = separate_discrete_and_continuous(df2, min_unique_vals=2)
+    dfd = preproc_discrete(dfd)  # takes a few minutes to process
+    dfc = preproc_continuous(dfc, scaling=scaling, impute_value=0, thres_corr=0.95)
+    assert len(np.unique(dfd.index == dfc.index)) == 1 & np.unique(dfd.index == dfc.index) == True,\
+        "Index mismatch when concatenating discrete and continuous dataframes."
+    df2 = pd.concat([dfc, dfd], axis=1, ignore_index=False)
+    df2 = drop_low_variance_cols(df2, thres_var=0.2, skipna=True, verbose=True)
+    # (ap) =========================
+
     df2 = df2.astype(np.float32)
+    # np.sum([len(np.unique(df[c])) for c in df.columns] == 1)  # (ap) check if there are feats with var=0 (i.e. const)
 
-    df_dg = pd.concat([df1, df2], axis=1)
+    df_dg = pd.concat([df1, df2], axis=1, ignore_index=False)
 
     return df_dg
 
 
+def load_smiles(verbose=False):
+    """(ap) Load SMILES data (Simplified Molecular-Input Line-Entry System).
+    Args:
+    Returns:
+    """
+    # path = get_file(P1B3_URL + 'descriptors.2D-NSC.5dose.filtered.txt')
+    path = get_file(P1B3_URL + 'ChemStructures_Consistent.smiles')
+
+    df = global_cache.get(path)
+    if df is None:
+        df = pd.read_csv(path, sep='\t', engine='c', dtype=np.str)  # (ap) update this command
+        # df = pd.read_csv(path, sep='\t', engine='c')  # (ap) update this command
+        global_cache[path] = df
+
+    # TODO maybe do some processing (data augmentation; check if strings are valid)
+    df_smiles = df
+
+    if verbose:
+        print('SMILES shape {}'.format(df_smiles.shape))
+        print('SMILES columns {}'.format(df.columns))
+
+    return df_smiles
+
+
 def load_cell_expression_u133p2(ncols=None, scaling='std', add_prefix=True):
     """Load U133_Plus2 cell line expression data prepared by Judith,
-        sub-select columns of gene expression randomly if specificed,
-        scale the selected data and return a pandas dataframe.
+    sub-select columns of gene expression randomly if specificed,
+    scale the selected data and return a pandas dataframe.
 
     Parameters
     ----------
-    ncols : int or None
+    ncols: int or None
         number of columns (gene expression) to randomly subselect (default None : use all data)
-    scaling : 'maxabs' [-1,1], 'minmax' [0,1], 'std', or None, optional (default 'std')
+    scaling: 'maxabs' [-1,1], 'minmax' [0,1], 'std', or None, optional (default 'std')
         type of scaling to apply
     add_prefix: True or False
         add feature namespace prefix
@@ -273,14 +256,14 @@ def load_cell_expression_u133p2(ncols=None, scaling='std', add_prefix=True):
 
 def load_cell_expression_5platform(ncols=None, scaling='std', add_prefix=True):
     """Load 5-platform averaged cell line expression data, sub-select
-        columns of gene expression randomly if specificed, scale the
-        selected data and return a pandas dataframe.
+    columns of gene expression randomly if specificed, scale the
+    selected data and return a pandas dataframe.
 
     Parameters
     ----------
-    ncols : int or None
+    ncols: int or None
         number of columns (gene expression) to randomly subselect (default None : use all data)
-    scaling : 'maxabs' [-1,1], 'minmax' [0,1], 'std', or None, optional (default 'std')
+    scaling: 'maxabs' [-1,1], 'minmax' [0,1], 'std', or None, optional (default 'std')
         type of scaling to apply
     add_prefix: True or False
         add feature namespace prefix
@@ -290,8 +273,7 @@ def load_cell_expression_5platform(ncols=None, scaling='std', add_prefix=True):
 
     df = global_cache.get(path)
     if df is None:
-        df = pd.read_csv(path, sep='\t', engine='c',
-                         na_values=['na','-',''])
+        df = pd.read_csv(path, sep='\t', engine='c', na_values=['na', '-', ''])
         global_cache[path] = df
 
     df1 = df['CellLine']
@@ -316,14 +298,14 @@ def load_cell_expression_5platform(ncols=None, scaling='std', add_prefix=True):
 
 def load_cell_mirna(ncols=None, scaling='std', add_prefix=True):
     """Load cell line microRNA data, sub-select columns randomly if
-        specificed, scale the selected data and return a pandas
-        dataframe.
+    specificed, scale the selected data and return a pandas
+    dataframe.
 
     Parameters
     ----------
-    ncols : int or None
+    ncols: int or None
         number of columns to randomly subselect (default None : use all data)
-    scaling : 'maxabs' [-1,1], 'minmax' [0,1], 'std', or None, optional (default 'std')
+    scaling: 'maxabs' [-1,1], 'minmax' [0,1], 'std', or None, optional (default 'std')
         type of scaling to apply
     add_prefix: True or False
         add feature namespace prefix
@@ -358,14 +340,14 @@ def load_cell_mirna(ncols=None, scaling='std', add_prefix=True):
 
 def load_cell_proteome(ncols=None, scaling='std', add_prefix=True):
     """Load cell line microRNA data, sub-select columns randomly if
-        specificed, scale the selected data and return a pandas
-        dataframe.
+    specificed, scale the selected data and return a pandas
+    dataframe.
 
     Parameters
     ----------
-    ncols : int or None
+    ncols: int or None
         number of columns to randomly subselect (default None : use all data)
-    scaling : 'maxabs' [-1,1], 'minmax' [0,1], 'std', or None, optional (default 'std')
+    scaling: 'maxabs' [-1,1], 'minmax' [0,1], 'std', or None, optional (default 'std')
         type of scaling to apply
     add_prefix: True or False
         add feature namespace prefix
@@ -419,9 +401,9 @@ def load_drug_autoencoded_AG(ncols=None, scaling='std', add_prefix=True):
 
     Parameters
     ----------
-    ncols : int or None
+    ncols: int or None
         number of columns (drug latent representations) to randomly subselect (default None : use all data)
-    scaling : 'maxabs' [-1,1], 'minmax' [0,1], 'std', or None, optional (default 'std')
+    scaling: 'maxabs' [-1,1], 'minmax' [0,1], 'std', or None, optional (default 'std')
         type of scaling to apply
     add_prefix: True or False
         add feature namespace prefix
@@ -469,19 +451,18 @@ def drugs_in_set(set_name):
 
 
 def load_by_cell_data(cell='BR:MCF7', drug_features=['descriptors'], shuffle=True,
-                      min_logconc=-5., max_logconc=-4., subsample='naive_balancing',
+                      min_logconc=-5., max_logconc=-4., subsample=None,
                       feature_subsample=None, scaling='std', scramble=False, verbose=True):
-
-    """Load dataframe for by cellline models
+    """Load dataframe for by cellline models.
 
     Parameters
     ----------
     cell: cellline ID
-    drug_features: list of strings from 'descriptors', 'latent', 'all', 'noise' (default ['descriptors'])
+    drug_features: list of strings from 'descriptors', 'latent', 'all', 'smiles', 'noise' (default ['descriptors']) (ap)
         use dragon7 descriptors, latent representations from Aspuru-Guzik's SMILES autoencoder
-        trained on NSC drugs, or both; use random features if set to noise
-    shuffle : True or False, optional (default True)
-        if True shuffles the merged data before splitting training and validation sets
+        trained on NSC drugs, or both; use SMILES strings; use random features if set to noise (ap)
+    shuffle: True or False, optional (default True)
+        if True shuffles the merged data before splitting training and validation sets (ap) --> add this functionality
     scramble: True or False, optional (default False)
         if True randomly shuffle dose response data as a control
     min_logconc: float value between -3 and -7, optional (default -5.)
@@ -493,19 +474,42 @@ def load_by_cell_data(cell='BR:MCF7', drug_features=['descriptors'], shuffle=Tru
     scaling: None, 'std', 'minmax' or 'maxabs' (default 'std')
         type of feature scaling: 'maxabs' to [-1,1], 'maxabs' to [-1, 1], 'std' for standard normalization
     subsample: 'naive_balancing' or None
-        if True balance dose response data with crude subsampling
+        if True balance dose response data with crude subsampling  (ap) --> update docstring!!
     scramble: True or False, optional (default False)
         if True randomly shuffle dose response data as a control
     """
-
     if 'all' in drug_features:
         drug_features = ['descriptors', 'latent']
 
     df_resp = load_dose_response(subsample=subsample, min_logconc=min_logconc, max_logconc=max_logconc, fraction=True)
 
-    df = df_resp[df_resp['CELLNAME'] == cell].reset_index() # (ap) extract obs of the relevant cell
-    df = df[['NSC', 'GROWTH', 'LOG_CONCENTRATION']] # (ap) extract all columns except CELLNAME
+    df = df_resp[df_resp['CELLNAME'] == cell].reset_index()  # extract samples of the relevant CELLNAME
+    df = df[['NSC', 'GROWTH', 'LOG_CONCENTRATION']]  # extract all columns except CELLNAME
     df = df.rename(columns={'LOG_CONCENTRATION': 'LCONC'})
+
+    # (ap) =========================
+    # # df.to_csv('df_resp_cell.csv')
+    #
+    # # Plot LCONC hist
+    # plt.figure()
+    # plt.hist(df['LCONC'], bins=30)
+    # plt.xlabel('LCONC')
+    # plt.ylabel('Count')
+    # plt.title('LCONC histogram (raw) [{:.2f}, {:.2f}]'.format(df['LCONC'].min(), df['LCONC'].max()))
+    # plt.grid('on')
+    # plt.savefig('hist_lconc_raw')
+    #
+    # # Plot GRWOTH hist
+    # plt.figure()
+    # plt.hist(df['GROWTH'], bins=30)
+    # plt.xlabel('GROWTH')
+    # plt.ylabel('Count')
+    # plt.title('GROWTH histogram (raw) [{:.2f}, {:.2f}]'.format(df['GROWTH'].min(), df['GROWTH'].max()))
+    # plt.grid('on')
+    # plt.savefig('hist_growth_raw')
+    #
+    # plt.close('all')
+    # (ap) =========================
 
     input_dims = collections.OrderedDict()
     input_dims['log_conc'] = 1
@@ -513,6 +517,10 @@ def load_by_cell_data(cell='BR:MCF7', drug_features=['descriptors'], shuffle=Tru
     for fea in drug_features:
         if fea == 'descriptors':
             df_desc = load_drug_descriptors(ncols=feature_subsample, scaling=scaling)
+            # print('\n{} samples {}'.format(fea, len(df_desc['NSC'])))
+            # print('{} NSC unique {}'.format(fea, len(df_desc['NSC'].unique())))
+            # print('dose response samples', len(df['NSC']))
+            # print('dose response NSC unique', len(df['NSC'].unique()))
             df = df.merge(df_desc, on='NSC')
             input_dims['drug_descriptors'] = df_desc.shape[1] - 1
         elif fea == 'latent':
@@ -526,18 +534,26 @@ def load_by_cell_data(cell='BR:MCF7', drug_features=['descriptors'], shuffle=Tru
                                    columns=['RAND-{:03d}'.format(x) for x in range(500)])
             df = df.merge(df_rand, on='NSC')
             input_dims['drug_noise'] = df_rand.shape[1] - 1
+        elif fea == 'smiles':  # (ap)
+            df_smiles = load_smiles()
+            # print('\n{} samples {}'.format(fea, len(df_smiles['NSC'])))
+            # print('{} NSC unique {}'.format(fea, len(df_smiles['NSC'].unique())))
+            # print('dose response samples', len(df['NSC']))
+            # print('dose response NSC unique', len(df['NSC'].unique()))
+            df = df.merge(df_smiles, on='NSC')
+            input_dims['drug_smiles'] = df_smiles.shape[1] - 1
 
     df = df.set_index('NSC')
 
     if df.shape[0] and verbose:
-        print('Loaded {} rows and {} columns'.format(df.shape[0], df.shape[1]))
+        print('\nLoaded {} rows and {} columns'.format(df.shape[0], df.shape[1]))
         print('Input features:', ', '.join(['{}: {}'.format(k, v) for k, v in input_dims.items()]))
 
     return df
 
 
 def load_by_drug_data(drug='1', cell_features=['expression'], shuffle=True,
-                      use_gi50=False, logconc=-4., subsample='naive_balancing',
+                      use_gi50=False, logconc=-4., subsample=None,
                       feature_subsample=None, scaling='std', scramble=False, verbose=True):
 
     """Load dataframe for by drug models
@@ -561,7 +577,7 @@ def load_by_drug_data(drug='1', cell_features=['expression'], shuffle=True,
     scaling: None, 'std', 'minmax' or 'maxabs' (default 'std')
         type of feature scaling: 'maxabs' to [-1,1], 'maxabs' to [-1, 1], 'std' for standard normalization
     subsample: 'naive_balancing' or None
-        if True balance dose response data with crude subsampling
+        if True balance dose response data with crude subsampling  (ap) --> update docstring!!
     scramble: True or False, optional (default False)
         if True randomly shuffle dose response data as a control
     """
