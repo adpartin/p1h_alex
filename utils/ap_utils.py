@@ -322,7 +322,7 @@ def tokenize_smiles(samples, token_method='seq_smiles'):
 
     TODO
     - the bonds indicated by \ and / always come in pairs (http://opensmiles.org/opensmiles.html), but in our dataset
-      some strings contains odd number of these characters --> these are invalid as indicated in the link (??)
+      some strings contain odd number of these characters --> these are invalid as indicated in the link (??)
     - understand what is '\\' in our strings?
     """
     samples_org = samples.copy()
@@ -498,22 +498,19 @@ def print_results(train_scores, val_scores):
                                                           val_scores.iloc[:, i].sum() / k_folds))
 
 
-def create_dense_model(n_features, optimizer='adam', loss='mae', initializer='glorot_uniform', metrics=None):
+def create_dense_model(input_shape, optimizer='adam', loss='mae', initializer='glorot_uniform', metrics=None):
     """ Create densely connected model. """
-    inputs = Input(shape=(n_features,), dtype=np.float32, name='inputs')
-    x = layers.Dense(units=256, kernel_initializer=initializer, activation='relu')(inputs)
+    inputs = Input(shape=input_shape, dtype=np.float32, name='inputs')
+    x = layers.Dense(units=512, kernel_initializer=initializer, activation='relu')(inputs)
     x = layers.BatchNormalization()(x)
     x = layers.Dense(units=256, kernel_initializer=initializer, activation='relu')(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.Dense(units=256, kernel_initializer=initializer, activation='relu')(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.Dense(units=128, kernel_initializer=initializer, activation='relu')(x)
     x = layers.BatchNormalization()(x)
     x = layers.Dense(units=128, kernel_initializer=initializer, activation='relu')(x)
     x = layers.BatchNormalization()(x)
     x = layers.Dense(units=64, kernel_initializer=initializer, activation='relu')(x)
     x = layers.BatchNormalization()(x)
     x = layers.Dense(units=32, kernel_initializer=initializer, activation='relu')(x)
+    x = layers.BatchNormalization()(x)
     outputs = layers.Dense(units=1, kernel_initializer=initializer)(x)
 
     model = Model(inputs=[inputs], outputs=[outputs])

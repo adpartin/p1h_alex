@@ -1,5 +1,6 @@
 from __future__ import print_function
 
+# When running on remotely
 import matplotlib
 matplotlib.use('Agg')
 
@@ -33,8 +34,10 @@ if args.by == 'cell':
         print(cell + ':', end=' ')
         df = NCI60.load_by_cell_data(cell, drug_features=args.drug_features, scaling=args.scaling,
                                      min_logconc=args.min_logconc, max_logconc=args.max_logconc,
-                                     subsample=args.subsample, feature_subsample=args.feature_subsample,
-                                     verbose=False)
+                                     subsample=args.subsample, feature_subsample=args.feature_subsample, verbose=False,
+                                     thres_frac_rows=args.thres_frac_rows, thres_frac_cols=args.thres_frac_cols,  # (ap)
+                                     thres_discrete=args.thres_discrete, thres_corr=args.thres_corr,  # (ap)
+                                     thres_var=args.thres_var)   # (ap)
         if df.shape[0]:
             fname = os.path.join(args.out_dir, cell + '.csv')
             df.to_csv(fname, float_format=args.float_format)

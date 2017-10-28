@@ -14,23 +14,27 @@ from keras import optimizers, losses, initializers
 from utils import ap_utils
 
 
-# Choose a GPU
+# Choose GPU
 import matplotlib
 matplotlib.use('Agg')
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import matplotlib.pyplot as plt  # this shuold be invoked after os.environ[]
 
 
-# Initialize the parser
-description = 'Build neural net (sequence processing) to process SMILES strings for drug response prediction.'
+# Initialize parser
+description = 'Build neural network to process SMILES strings (sequence processing) for drug response prediction.'
 parser = get_parser(description)
 args = parser.parse_args()
+
+print('Args:', args, end='\n\n')
+print('Use percent growth for dose levels in log concentration range: [{}, {}]'.format(args.min_logconc, args.max_logconc))
 
 seed = [0, 100, 2017]
 np.random.seed(seed[0])
 
 
 # Load data
+# (data should be generated using dataframe.py)
 root_dir = os.path.dirname(os.path.realpath(__file__))
 # root_dir = os.getcwd()
 data_file_name = args.file  # 'BR:MCF7_smiles.csv'
@@ -39,6 +43,7 @@ data_file_path = os.path.join(root_dir, data_file_name)
 assert os.path.exists(data_file_path), "The following path was not found:  {}".format(data_file_path)
 data = pd.read_csv(data_file_path)
 
+# (another appraoch is to get data)
 # from datasets import NCI60
 # data = NCI60.load_by_cell_data('BR:MCF7', drug_features=['smiles'], subsample=None)
 
@@ -46,10 +51,23 @@ print('\nTotal SMILES strings: {}'.format(len(data['SMILES'])))
 print('Total SMILES strings (unique): {}'.format(len(data['SMILES'].unique())))
 
 
-# Remove SMILES if they are too short/large
+# Remove SMILES based on length (if too short/large) --> add this to NCI60.py
 smiles_len = data['SMILES'].apply(len)  # the vector smiles_len contains the length of smiles strings
 data = ap_utils.filter_on_smiles_len(data=data, smiles_len=smiles_len, thres_min=None, thres_max=None)
 
+
+# Drop duplicates
+# data = data.drop_duplicates()
+
+# Remove NSC column
+# data = data.loc[:, data.columns != 'NSC']  # TODO: check if NSC helps prediction
+
+
+'''
+========================================================================================================================
+Prepare the data (tokenize and split)
+========================================================================================================================
+'''
 # Shuffle the dataset
 if data.index.name:
     data = data.reset_index()
@@ -59,18 +77,7 @@ data = data.reindex(index=new_index)
 #np.random.shuffle(data)
 print('\n{}'.format(data.head()))
 
-# Remove NSC column
-# data = data.loc[:, data.columns != 'NSC']  # TODO: check if NSC helps prediction
-
-# Drop duplicates
-# data = data.drop_duplicates()
-
-
-'''
-========================================================================================================================
-Prepare the data (tokenize)
-========================================================================================================================
-'''
+# SMILES to list of strings
 samples = [s for s in data['SMILES']]
 
 # ===============================================
@@ -91,6 +98,7 @@ samples = [s for s in data['SMILES']]
 # samples = smis
 # ===============================================
 
+# Choose tokenization method and tokenize
 token_method = args.token  # 'seq_generic', 'seq_smiles', '3d_smiles'
 X, tokenizer = ap_utils.tokenize_smiles(samples, token_method=token_method)
 
@@ -98,7 +106,7 @@ X, tokenizer = ap_utils.tokenize_smiles(samples, token_method=token_method)
 data['GROWTH'] = data['GROWTH'].apply(lambda x: -1 if x < -1 else x)
 data['GROWTH'] = data['GROWTH'].apply(lambda x: 1 if x > 1 else x)
 
-# Extract LCONC (will be concatenated with SMILES as input to NN) and GROWTH (response var)
+# Extract LCONC (will be concatenated with SMILES as an input to NN) and GROWTH (response var)
 X_lconc = data['LCONC'].values.reshape(-1, 1)
 Y = data['GROWTH'].values
 
@@ -181,15 +189,20 @@ for f, (train_idx, val_idx) in enumerate(skf.split(X, y_even)):
     #     id = thresholds[ii-1] <= Y & Y < thresholds[ii-1]
     #     plt.hist(Y[id], bins=20, alpha=0.7)
 
-    # Split the data
+    # Split data
     x_train, x_val = X[train_idx], X[val_idx]
     y_train, y_val = Y[train_idx], Y[val_idx]
     x_train_lconc, x_val_lconc = X_lconc[train_idx], X_lconc[val_idx]
 
+    # Get the optimizer
+    if args.optimizer == 'adam':
+        optimizer = optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.0)
+    elif args.optimizer == 'rmsprop':
+        optimizer = optimizers.RMSprop(lr=0.001, rho=0.9, epsilon=1e-08, decay=0)
+    elif args.optimizer == 'sgd':
+        optimizer = optimizers.SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
+
     # Create model
-    # optimizer = optimizers.SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
-    # optimizer = optimizers.RMSprop(lr=0.001, rho=0.9, epsilon=1e-08, decay=0)
-    optimizer = optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.0)
     model = ap_utils.create_rnn_with_lconc(input_shape=input_shape, layer=layer, optimizer=optimizer,
                                            loss=loss, initializer=initializer, metrics=metrics,
                                            data_dim=len(X.shape),
@@ -206,7 +219,7 @@ for f, (train_idx, val_idx) in enumerate(skf.split(X, y_even)):
     train_scores.iloc[f, :] = model.evaluate(x=[x_train, x_train_lconc], y=y_train, batch_size=batch_size, verbose=False)
     val_scores.iloc[f, :] = model.evaluate(x=[x_val, x_val_lconc], y=y_val, batch_size=batch_size, verbose=False)
 
-    # Save the best model based on loss
+    # Save best model based on loss
     if val_scores.iloc[f, 0] > best_score:
         best_score = val_scores.iloc[f, 0]
         best_model = model
@@ -237,5 +250,4 @@ ap_utils.plot_learning(hs[best_model_id], savefig=True, img_name=model_name + '_
 
 # Save model
 model.save(model_name+'.h5')
-
 

@@ -5,20 +5,15 @@ import os
 import re
 import sys
 
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-
 from sklearn.preprocessing import Imputer
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, MaxAbsScaler
-
-from data_exploration import *  # (ap)
 
 file_path = os.path.dirname(os.path.realpath(__file__))  # dirname returns the directory name of pathname
 lib_path = os.path.abspath(os.path.join(file_path, '..', 'utils'))  # abspath returns the normalized absolutized version of the pathname
 sys.path.append(lib_path)
 
 from data_utils import get_file
+from utils.data_preproc import *
 
 global_cache = {}
 
@@ -27,7 +22,7 @@ P1B3_URL = 'http://ftp.mcs.anl.gov/pub/candle/public/benchmarks/P1B3/'
 
 
 def impute_and_scale(df, scaling='std'):
-    """Impute missing values with mean and scale data included in pandas dataframe.
+    """ Impute missing values with mean and scale data included in pandas dataframe.
 
     Parameters
     ----------
@@ -58,6 +53,64 @@ def impute_and_scale(df, scaling='std'):
     return df
 
 
+def impute_and_scale_new(df, scaling='std', thres_frac_rows=1, thres_frac_cols=1, thres_var=0, thres_corr=1,
+                         thres_discrete=0, onehot_discrete='no', create_iom='no', verbose=True):
+    """ Preprocess data.
+    Args:
+        df (pd.DataFrame): input dataframe
+        scaling (str): scaling method
+        thres_frac_rows (float): threshold of min number of missing elements in a row as a fraction of total number of elements
+        thres_frac_cols (float): threshold of min number of missing elements in a col as a fraction of total number of elements
+        thres_var (float): drop cols in which the variance is lower than thres_var
+        thres_corr (float): min correlation value to drop the cols
+        thres_discrete (int): max number of unique values in a col (excluding na values) to consider the col as discrete
+        onehot_discrete (str): whether to onehot encode the discrete values
+        create_iom (str): whether to create indicator of missingness (add binary columns indicating missing values)
+
+    Returns:
+       dff (pd.DataFrame): updated dataframe
+       row_index (pd.Series): boolean vector where True indicates the dropped rows
+    """
+    # Remove empty rows
+    # # df = df.dropna(axis=0, how='all')  # alternatively
+    # len0 = len(df)
+    # row_index = (~df.isnull()).sum(axis=1) == 0  # boolean vector; True indicate empty rows
+    # rows_empty = df.index[row_index]  # indexes of empty rows
+    # df = df.loc[~row_index, :]
+    # if verbose:
+    #     print("{} rows out of {} were dropped because they are empty.".format(len0-len(df), len0))
+
+    # Remove empty cols
+    # # df = df.dropna(axis=1, how='all')  # alternatively
+    # len0 = len(df.columns)
+    # col_index = (~df.isnull()).sum(axis=0) == 0  # boolean vector; True indicate empty cols
+    # cols_empty = df.columns[col_index]  # names of empty cols
+    # df = df.loc[:, ~col_index]
+    # if verbose:
+    #     print("{} cols out of {} were dropped because they are empty.".format(len0-len(df.columns), len0))
+
+    df, row_index, _ = dropna_rows(df, thres_frac=thres_frac_rows, verbose=True)
+    df, _ = dropna_cols(df, thres_frac=thres_frac_cols, verbose=True)
+
+    dfc, dfd = split_discrete_and_continuous(df, thres_discrete=thres_discrete)
+
+    dfc = preproc_continuous(dfc, scaling=scaling, impute_value='mean', thres_corr=thres_corr, create_iom=create_iom)
+    if not dfd.empty:
+        dfd = preproc_discrete(dfd, onehot=onehot_discrete)  # takes a few minutes to process
+
+    if (not dfc.empty) and (not dfd.empty):
+        assert len(np.unique(dfd.index == dfc.index)) == 1, "Index mismatch when concatenating dataframes."
+        dff = pd.concat([dfc, dfd], axis=1)
+    elif not dfd.empty:
+        dff = dfd
+    elif not dfc.empty:
+        dff = dfc
+
+    dff, _ = drop_low_variance_cols(dff, thres_var=thres_var, skipna=True, verbose=True)
+
+    return dff, row_index
+
+
 def describe_response_data(df, cells=['all'], drugs=['A'], doses=[-5, -4]):
     if 'all' in cells or cells == 'all':
         cells = all_cells()
@@ -77,7 +130,7 @@ def describe_response_data(df, cells=['all'], drugs=['A'], doses=[-5, -4]):
         break
 
 
-def load_dose_response(min_logconc=-4., max_logconc=-4., subsample=None, fraction=False):
+def load_dose_response(min_logconc=-4., max_logconc=-4., subsample=None, fraction=False, verbose=True):
     """Load cell line response to different drug compounds, sub-select response for a specific
     drug log concentration range and return a pandas dataframe.
 
@@ -101,10 +154,11 @@ def load_dose_response(min_logconc=-4., max_logconc=-4., subsample=None, fractio
         global_cache[path] = df
 
     # (ap) =========================
-    # Remove samples if LCONC or GROWTH are na
+    # Drop samples if LCONC or GROWTH are na
     na_index = (df['LOG_CONCENTRATION'].isnull()) | (df['GROWTH'].isnull())
-    print('\n{} out of {} samples were removed from NCI60 dataset '
-          '(where LCONC or GROWTH are na).'.format(na_index.sum(), len(df)))
+    if verbose:
+        print('\n{} out of {} samples were dropped from NCI60 dataset '
+              '(where LCONC or GROWTH are na).'.format(na_index.sum(), len(df)))
     df = df.loc[~na_index, :]
     # (ap) =========================
 
@@ -112,8 +166,9 @@ def load_dose_response(min_logconc=-4., max_logconc=-4., subsample=None, fractio
 
     df = df[(df['LOG_CONCENTRATION'] >= min_logconc) & (df['LOG_CONCENTRATION'] <= max_logconc)]
 
-    print('{} out of {} samples were removed from NCI60 dataset based on the logconc range.'.format(
-        df_len-len(df), df_len))  # (ap)
+    if verbose:
+        print('\n{} out of {} samples were dropped from NCI60 dataset based on the logconc range: [{}, {}].'.format(
+            df_len-len(df), df_len, min_logconc, max_logconc))  # (ap)
 
     df = df[['NSC', 'CELLNAME', 'GROWTH', 'LOG_CONCENTRATION']]
 
@@ -132,10 +187,11 @@ def load_dose_response(min_logconc=-4., max_logconc=-4., subsample=None, fractio
     return df
 
 
-def load_drug_descriptors(ncols=None, scaling='std', add_prefix=True):
-    """Load drug descriptor data, sub-select columns of drugs descriptors
-    randomly if specified, impute and scale the selected data, and return a
-    pandas dataframe.
+def load_drug_descriptors(ncols=None, scaling='std', add_prefix=True,
+                          thres_frac_rows=1, thres_frac_cols=1, thres_var=0, thres_corr=1, thres_discrete=0,  # (ap)
+                          onehot_discrete='no', create_iom='no'):  # (ap)
+    """ Load drug descriptor data, sub-select columns of drugs descriptors randomly if specified,
+    impute and scale the selected data, and return a pandas dataframe.
 
     Parameters
     ----------
@@ -145,6 +201,14 @@ def load_drug_descriptors(ncols=None, scaling='std', add_prefix=True):
         type of scaling to apply
     add_prefix: True or False
         add feature namespace prefix
+
+    thres_frac_rows (float): threshold of min number of missing elements in a row as a fraction of total number of elements
+    thres_frac_cols (float): threshold of min number of missing elements in a col as a fraction of total number of elements
+    thres_var (float): drop cols in which the variance is lower than thres_var
+    thres_corr (float): min correlation value to drop the cols
+    thres_discrete (int): max number of unique values in a col (excluding na values) to consider the col as discrete
+    onehot_discrete (str): whether to onehot encode the discrete features
+    create_iom (str): whether to create iom (indicator of missingness)
     """
     path = get_file(P1B3_URL + 'descriptors.2D-NSC.5dose.filtered.txt')
 
@@ -168,24 +232,17 @@ def load_drug_descriptors(ncols=None, scaling='std', add_prefix=True):
 
     # df2.to_csv('df2_dragon7.csv')  # (ap) save to explore the data
 
-    # print('Using impute_and_scale() function.')
-    # df2 = impute_and_scale(df2, scaling)  # (ap) trying something different
+    df2 = impute_and_scale(df2, scaling)  # (ap) disbaled/commented the original pre-processing
 
     # (ap) =========================
-    print('Using new preprocessing scheme.')
-    df2, drugs_removed = drop_missing_rows(df2, thres_frac=0.99, verbose=True)
-    df2, feats_removed = drop_missing_cols(df2, thres_frac=0.99, verbose=True)
-    dfc, dfd = separate_discrete_and_continuous(df2, min_unique_vals=2)
-    dfd = preproc_discrete(dfd)  # takes a few minutes to process
-    dfc = preproc_continuous(dfc, scaling=scaling, impute_value=0, thres_corr=0.95)
-    assert len(np.unique(dfd.index == dfc.index)) == 1 & np.unique(dfd.index == dfc.index) == True,\
-        "Index mismatch when concatenating discrete and continuous dataframes."
-    df2 = pd.concat([dfc, dfd], axis=1, ignore_index=False)
-    df2 = drop_low_variance_cols(df2, thres_var=0.2, skipna=True, verbose=True)
+    # df2, row_index = impute_and_scale_new(df2, scaling=scaling, thres_frac_rows=thres_frac_rows,
+    #                                       thres_frac_cols=thres_frac_cols, thres_var=thres_var, thres_corr=thres_corr,
+    #                                       thres_discrete=thres_discrete, onehot_discrete=onehot_discrete,
+    #                                       create_iom=create_iom)
+    # df1 = df1.loc[~row_index, :]  # adjust the indexes in df1 to the indexes of df2
     # (ap) =========================
 
     df2 = df2.astype(np.float32)
-    # np.sum([len(np.unique(df[c])) for c in df.columns] == 1)  # (ap) check if there are feats with var=0 (i.e. const)
 
     df_dg = pd.concat([df1, df2], axis=1, ignore_index=False)
 
@@ -193,17 +250,15 @@ def load_drug_descriptors(ncols=None, scaling='std', add_prefix=True):
 
 
 def load_smiles(verbose=False):
-    """(ap) Load SMILES data (Simplified Molecular-Input Line-Entry System).
+    """ (ap) Load SMILES data (Simplified Molecular-Input Line-Entry System).
     Args:
     Returns:
     """
-    # path = get_file(P1B3_URL + 'descriptors.2D-NSC.5dose.filtered.txt')
     path = get_file(P1B3_URL + 'ChemStructures_Consistent.smiles')
 
     df = global_cache.get(path)
     if df is None:
         df = pd.read_csv(path, sep='\t', engine='c', dtype=np.str)  # (ap) update this command
-        # df = pd.read_csv(path, sep='\t', engine='c')  # (ap) update this command
         global_cache[path] = df
 
     # TODO maybe do some processing (data augmentation; check if strings are valid)
@@ -217,7 +272,7 @@ def load_smiles(verbose=False):
 
 
 def load_cell_expression_u133p2(ncols=None, scaling='std', add_prefix=True):
-    """Load U133_Plus2 cell line expression data prepared by Judith,
+    """ Load U133_Plus2 cell line expression data prepared by Judith,
     sub-select columns of gene expression randomly if specificed,
     scale the selected data and return a pandas dataframe.
 
@@ -255,9 +310,9 @@ def load_cell_expression_u133p2(ncols=None, scaling='std', add_prefix=True):
 
 
 def load_cell_expression_5platform(ncols=None, scaling='std', add_prefix=True):
-    """Load 5-platform averaged cell line expression data, sub-select
-    columns of gene expression randomly if specificed, scale the
-    selected data and return a pandas dataframe.
+    """ Load 5-platform averaged cell line expression data,
+    sub-select columns of gene expression randomly if specificed,
+    scale the selected data and return a pandas dataframe.
 
     Parameters
     ----------
@@ -297,9 +352,8 @@ def load_cell_expression_5platform(ncols=None, scaling='std', add_prefix=True):
 
 
 def load_cell_mirna(ncols=None, scaling='std', add_prefix=True):
-    """Load cell line microRNA data, sub-select columns randomly if
-    specificed, scale the selected data and return a pandas
-    dataframe.
+    """Load cell line microRNA data, sub-select columns randomly if specificed,
+    scale the selected data and return a pandas dataframe.
 
     Parameters
     ----------
@@ -339,9 +393,8 @@ def load_cell_mirna(ncols=None, scaling='std', add_prefix=True):
 
 
 def load_cell_proteome(ncols=None, scaling='std', add_prefix=True):
-    """Load cell line microRNA data, sub-select columns randomly if
-    specificed, scale the selected data and return a pandas
-    dataframe.
+    """ Load cell line microRNA data, sub-select columns randomly if specificed,
+    scale the selected data and return a pandas dataframe.
 
     Parameters
     ----------
@@ -352,7 +405,6 @@ def load_cell_proteome(ncols=None, scaling='std', add_prefix=True):
     add_prefix: True or False
         add feature namespace prefix
     """
-
     path1 = get_file(P1B3_URL + 'nci60_proteome_log2.transposed.tsv')
     path2 = get_file(P1B3_URL + 'nci60_kinome_log2.transposed.tsv')
 
@@ -395,9 +447,9 @@ def load_cell_proteome(ncols=None, scaling='std', add_prefix=True):
 
 
 def load_drug_autoencoded_AG(ncols=None, scaling='std', add_prefix=True):
-    """Load drug latent representation from Aspuru-Guzik's variational
-    autoencoder, sub-select columns of drugs randomly if specificed,
-    impute and scale the selected data, and return a pandas dataframe
+    """ Load drug latent representation from Aspuru-Guzik's variational autoencoder,
+    sub-select columns of drugs randomly if specificed,
+    impute and scale the selected data, and return a pandas dataframe.
 
     Parameters
     ----------
@@ -452,8 +504,10 @@ def drugs_in_set(set_name):
 
 def load_by_cell_data(cell='BR:MCF7', drug_features=['descriptors'], shuffle=True,
                       min_logconc=-5., max_logconc=-4., subsample=None,
-                      feature_subsample=None, scaling='std', scramble=False, verbose=True):
-    """Load dataframe for by cellline models.
+                      feature_subsample=None, scaling='std', scramble=False, verbose=True,
+                      thres_frac_rows=1, thres_frac_cols=1, thres_var=0, thres_corr=1, thres_discrete=0,
+                      onehot_discrete='no', create_iom='no', min_growth_bound=-1, max_growth_bound=1):
+    """ Load dataframe for by cellline models.
 
     Parameters
     ----------
@@ -462,7 +516,7 @@ def load_by_cell_data(cell='BR:MCF7', drug_features=['descriptors'], shuffle=Tru
         use dragon7 descriptors, latent representations from Aspuru-Guzik's SMILES autoencoder
         trained on NSC drugs, or both; use SMILES strings; use random features if set to noise (ap)
     shuffle: True or False, optional (default True)
-        if True shuffles the merged data before splitting training and validation sets (ap) --> add this functionality
+        if True shuffles the merged data before splitting training and validation sets
     scramble: True or False, optional (default False)
         if True randomly shuffle dose response data as a control
     min_logconc: float value between -3 and -7, optional (default -5.)
@@ -483,50 +537,31 @@ def load_by_cell_data(cell='BR:MCF7', drug_features=['descriptors'], shuffle=Tru
 
     df_resp = load_dose_response(subsample=subsample, min_logconc=min_logconc, max_logconc=max_logconc, fraction=True)
 
-    df = df_resp[df_resp['CELLNAME'] == cell].reset_index()  # extract samples of the relevant CELLNAME
-    df = df[['NSC', 'GROWTH', 'LOG_CONCENTRATION']]  # extract all columns except CELLNAME
+    df = df_resp[df_resp['CELLNAME'] == cell].reset_index()  # get samples of the relevant CELLNAME
+    df = df[['NSC', 'GROWTH', 'LOG_CONCENTRATION']]  # get all cols except CELLNAME
     df = df.rename(columns={'LOG_CONCENTRATION': 'LCONC'})
 
-    # (ap) =========================
-    # # df.to_csv('df_resp_cell.csv')
-    #
-    # # Plot LCONC hist
-    # plt.figure()
-    # plt.hist(df['LCONC'], bins=30)
-    # plt.xlabel('LCONC')
-    # plt.ylabel('Count')
-    # plt.title('LCONC histogram (raw) [{:.2f}, {:.2f}]'.format(df['LCONC'].min(), df['LCONC'].max()))
-    # plt.grid('on')
-    # plt.savefig('hist_lconc_raw')
-    #
-    # # Plot GRWOTH hist
-    # plt.figure()
-    # plt.hist(df['GROWTH'], bins=30)
-    # plt.xlabel('GROWTH')
-    # plt.ylabel('Count')
-    # plt.title('GROWTH histogram (raw) [{:.2f}, {:.2f}]'.format(df['GROWTH'].min(), df['GROWTH'].max()))
-    # plt.grid('on')
-    # plt.savefig('hist_growth_raw')
-    #
-    # plt.close('all')
-    # (ap) =========================
+    # Bound (cap) the values of GROWTH to [-1, 1] (ap)
+    df['GROWTH'] = df['GROWTH'].apply(lambda x: min_growth_bound if x < min_growth_bound else x)
+    df['GROWTH'] = df['GROWTH'].apply(lambda x: max_growth_bound if x > max_growth_bound else x)
 
     input_dims = collections.OrderedDict()
     input_dims['log_conc'] = 1
 
     for fea in drug_features:
         if fea == 'descriptors':
-            df_desc = load_drug_descriptors(ncols=feature_subsample, scaling=scaling)
-            # print('\n{} samples {}'.format(fea, len(df_desc['NSC'])))
-            # print('{} NSC unique {}'.format(fea, len(df_desc['NSC'].unique())))
-            # print('dose response samples', len(df['NSC']))
-            # print('dose response NSC unique', len(df['NSC'].unique()))
+            df_desc = load_drug_descriptors(ncols=feature_subsample, scaling=scaling,
+                                            thres_frac_rows=thres_frac_rows, thres_frac_cols=thres_frac_cols,  # (ap)
+                                            thres_var=thres_var, thres_corr=thres_corr, thres_discrete=thres_discrete,  # (ap)
+                                            onehot_discrete=onehot_discrete, create_iom=create_iom)  # (ap)
             df = df.merge(df_desc, on='NSC')
             input_dims['drug_descriptors'] = df_desc.shape[1] - 1
+
         elif fea == 'latent':
             df_ag = load_drug_autoencoded_AG(ncols=feature_subsample, scaling=scaling)
             df = df.merge(df_ag, on='NSC')
             input_dims['smiles_latent_AG'] = df_ag.shape[1] - 1
+
         elif fea == 'noise':
             df_drug_ids = df[['NSC']].drop_duplicates()
             noise = np.random.normal(size=(df_drug_ids.shape[0], 500))
@@ -534,12 +569,9 @@ def load_by_cell_data(cell='BR:MCF7', drug_features=['descriptors'], shuffle=Tru
                                    columns=['RAND-{:03d}'.format(x) for x in range(500)])
             df = df.merge(df_rand, on='NSC')
             input_dims['drug_noise'] = df_rand.shape[1] - 1
+
         elif fea == 'smiles':  # (ap)
             df_smiles = load_smiles()
-            # print('\n{} samples {}'.format(fea, len(df_smiles['NSC'])))
-            # print('{} NSC unique {}'.format(fea, len(df_smiles['NSC'].unique())))
-            # print('dose response samples', len(df['NSC']))
-            # print('dose response NSC unique', len(df['NSC'].unique()))
             df = df.merge(df_smiles, on='NSC')
             input_dims['drug_smiles'] = df_smiles.shape[1] - 1
 
@@ -552,11 +584,9 @@ def load_by_cell_data(cell='BR:MCF7', drug_features=['descriptors'], shuffle=Tru
     return df
 
 
-def load_by_drug_data(drug='1', cell_features=['expression'], shuffle=True,
-                      use_gi50=False, logconc=-4., subsample=None,
+def load_by_drug_data(drug='1', cell_features=['expression'], shuffle=True, use_gi50=False, logconc=-4., subsample=None,
                       feature_subsample=None, scaling='std', scramble=False, verbose=True):
-
-    """Load dataframe for by drug models
+    """ Load dataframe for by drug models.
 
     Parameters
     ----------
@@ -581,7 +611,6 @@ def load_by_drug_data(drug='1', cell_features=['expression'], shuffle=True,
     scramble: True or False, optional (default False)
         if True randomly shuffle dose response data as a control
     """
-
     if 'all' in cell_features:
         cell_features = ['expression', 'mirna', 'proteome']
 
@@ -598,14 +627,17 @@ def load_by_drug_data(drug='1', cell_features=['expression'], shuffle=True,
             df_expr_u133p2 = load_cell_expression_u133p2(ncols=feature_subsample, scaling=scaling)
             df = df.merge(df_expr_u133p2, on='CELLNAME')
             input_dims['expression_u133p2'] = df_expr_u133p2.shape[1] - 1
+
         elif fea == 'expression_5platform':
             df_expr_5p = load_cell_expression_5platform(ncols=feature_subsample, scaling=scaling)
             df = df.merge(df_expr_5p, on='CELLNAME')
             input_dims['expression_5platform'] = df_expr_5p.shape[1] - 1
+
         elif fea == 'mirna':
             df_mirna = load_cell_mirna(ncols=feature_subsample, scaling=scaling)
             df = df.merge(df_mirna, on='CELLNAME')
             input_dims['microRNA'] = df_mirna.shape[1] - 1
+
         elif fea == 'proteome':
             df_prot = load_cell_proteome(ncols=feature_subsample, scaling=scaling)
             df = df.merge(df_prot, on='CELLNAME')

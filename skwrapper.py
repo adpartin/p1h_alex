@@ -54,9 +54,7 @@ def get_model(model_or_name, threads=-1, classification=False):
         'rf.10k': (RandomForestClassifier(n_estimators=10000, n_jobs=threads), 'RandomForestClassifier.10K')
     }
 
-    neural_network_model = {
-
-    }  # (ap) see how we can integrate neural network models into this framework
+    neural_network_model = {}  # TODO: integrate neural network models into this framework
 
     if isinstance(model_or_name, str):
         if classification:
@@ -96,7 +94,7 @@ def top_important_features(model, feature_names, n_top=1000):
             else:
                 return
         features = [(f, n) for f, n in zip(fi, feature_names)]
-        top = sorted(features, key=lambda f:abs(f[0]), reverse=True)[:n_top]
+        top = sorted(features, key=lambda f: abs(f[0]), reverse=True)[:n_top]
     return top
 
 
