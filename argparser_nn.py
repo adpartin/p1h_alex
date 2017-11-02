@@ -7,12 +7,12 @@ import argparse
 # THRES_VAR = 0
 # THRES_CORR = 1
 # THRES_DISCRETE = 2
-# MIN_GROWTH_BOUND = -1.0
-# MAX_GROWTH_BOUND = 1.0
+MIN_GROWTH_BOUND = -1.0
+MAX_GROWTH_BOUND = 1.0
 
 # === Neural netrowk ===
 NAME = 'model'
-FILE = 'BR:MCF7_smiles.csv'
+# FILE = None # 'BR:MCF7_smiles.csv'
 EPOCHS = 20
 BATCH = 128
 LAYER = 'conv1d'
@@ -21,6 +21,8 @@ TOKEN = '3d_smiles'
 # METRIC = ['r_square']
 # INITIALIZER = ['glorot_uniform']
 OPTIMIZER = 'adam'
+
+NSAMPLES = 10000
 # (ap) ----------------------------
 
 # CELLS = ['BR:MCF7']
@@ -32,8 +34,8 @@ OPTIMIZER = 'adam'
 CV = 5
 # FEATURE_SUBSAMPLE = 0
 # LOGCONC = -4.0
-# MIN_LOGCONC = -5.0
-# MAX_LOGCONC = -4.0
+MIN_LOGCONC = -5.0
+MAX_LOGCONC = -4.0
 # SCALING = 'std'
 # SUBSAMPLE = None
 # THREADS = -1
@@ -60,18 +62,18 @@ def get_parser(description=None):
     # parser.add_argument("--thres_discrete", type=int, default=THRES_DISCRETE,
     #                     help="max number of unique values in a col (excluding na values) to consider the col as discrete")
     #
-    # parser.add_argument("--min_growth_bound", type=float, default=MIN_GROWTH_BOUND,
-    #                     help="bound (cap) all growth values to this low value")
-    #
-    # parser.add_argument("--max_growth_bound", type=float, default=MAX_GROWTH_BOUND,
-    #                     help="bound (cap) all growth values to this max value")
+    parser.add_argument("--min_growth_bound", type=float, default=MIN_GROWTH_BOUND,
+                        help="bound (cap) all growth values to this low value")
+
+    parser.add_argument("--max_growth_bound", type=float, default=MAX_GROWTH_BOUND,
+                        help="bound (cap) all growth values to this max value")
 
     # === Neural networks ===
     parser.add_argument("--name", default=NAME, metavar='NAME',
                         help="name to use in order to store the model results")
 
-    parser.add_argument("--file", default=FILE, metavar='FILE',
-                        help="file name of the dataset")
+    # parser.add_argument("--file", default=FILE, metavar='FILE',
+    #                     help="file name of the dataset")
 
     parser.add_argument("--epochs", type=int, default=EPOCHS, metavar='EPOCHS',
                         help="number of epochs to train the network")
@@ -102,6 +104,9 @@ def get_parser(description=None):
     # parser.add_argument("--initializer", default=INITIALIZER, metavar='INITIALIZER',
     #                     choices=['glorotu', 'glorotn', 'heu', 'hen'],
     #                     help="weight initializer for the network")
+
+    parser.add_argument("--nsamples", type=int, default=NSAMPLES, metavar='NSAMPLES',
+                        help="number of smiles strings to process")
     # (ap) -------------------------------------------------------------------------------------------------------------
 
     # parser.add_argument("-c", "--cell_features", nargs='+', default=CELL_FEATURES, metavar='CELL_FEATURES',
@@ -144,12 +149,12 @@ def get_parser(description=None):
     # parser.add_argument("--logconc", type=float, default=LOGCONC,
     #                     help="log concentration of dose response data to use: -3.0 to -7.0")
     #
-    # parser.add_argument("--min_logconc", type=float, default=MIN_LOGCONC,
-    #                     help="min log concentration of dose response data to use: -3.0 to -7.0")
-    #
-    # parser.add_argument("--max_logconc",  type=float, default=MAX_LOGCONC,
-    #                     help="max log concentration of dose response data to use: -3.0 to -7.0")
-    #
+    parser.add_argument("--min_logconc", type=float, default=MIN_LOGCONC,
+                        help="min log concentration of dose response data to use: -3.0 to -7.0")
+
+    parser.add_argument("--max_logconc",  type=float, default=MAX_LOGCONC,
+                        help="max log concentration of dose response data to use: -3.0 to -7.0")
+
     # parser.add_argument("--use_gi50",  action="store_true",
     #                     help="use NCI GI50 value instead of percent growth at log concentration levels")
     #

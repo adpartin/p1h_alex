@@ -376,6 +376,7 @@ def tokenize_smiles(samples, token_method='seq_smiles'):
                     br[j] = 1
 
     for s_id, s in enumerate(samples):
+        # if s_id % 1000 == 0: print("sample", s_id)
         # s = 'CC(=O)OCC(=O)[C@@]1(O)CC[C@H]2[C@@H]3CCC4=CC(=O)C=C[C@]4(C)[C@@]3(F)[C@@H](O)C[C@]12C'
         # s = 'COc1c(O)c2N(CCc2c3cc([nH]c13)C(=O)N4CCc5c4c(O)c(OC)c6[nH]c(cc56)C(=O)N7CC8CC89C7=CC(=O)c%10[nH]cc(C)c9%10)C(=O)N'
         # s = 'O=C1c2ccc(c3cccc(c4nc5ccccc5n14)c23)S(=O)(=O)c6ccc7C(=O)n8c(nc9ccccc89)c%10cccc6c7%10a'
@@ -444,10 +445,11 @@ def tokenize_smiles(samples, token_method='seq_smiles'):
         max_length = np.max([len(i) for i in samples_org])
 
         x_data = np.zeros((len(samples), max_length, max(token_index.values()) + 1))
-        for sample_id, sample in enumerate(samples):
-            for word_id, word in enumerate(sample.split(sep='_')[:max_length]):
+        for s_id, s in enumerate(samples):
+            # if s_id % 1000 == 0: print("sample", s_id)
+            for word_id, word in enumerate(s.split(sep='_')[:max_length]):
                 index = token_index.get(word)
-                x_data[sample_id, word_id, index] = 1.0
+                x_data[s_id, word_id, index] = 1.0
 
     return x_data, tokenizer
 
@@ -575,11 +577,14 @@ def create_rnn_with_lconc(input_shape, layer='Conv1D', optimizer='adam', loss='m
     x = Dense(units=256, activation=None, kernel_initializer=initializer)(concatenated)
     x = BatchNormalization()(x)
     x = Activation('relu')(x)
-    # x = Dropout(0.5)(x)
+    # x = Dropout(0.1)(x)
     x = Dense(units=256, activation=None, kernel_initializer=initializer)(x)
     x = BatchNormalization()(x)
     x = Activation('relu')(x)
-    # x = Dropout(0.5)(x)
+    # x = Dropout(0.1)(x)
+    # x = Dense(units=256, activation=None, kernel_initializer=initializer)(x)
+    # x = BatchNormalization()(x)
+    # x = Activation('relu')(x)
 
     # Output layer
     output = Dense(units=1, kernel_initializer=initializer)(x)

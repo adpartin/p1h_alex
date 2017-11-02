@@ -130,7 +130,7 @@ def describe_response_data(df, cells=['all'], drugs=['A'], doses=[-5, -4]):
         break
 
 
-def load_dose_response(min_logconc=-4., max_logconc=-4., subsample=None, fraction=False, verbose=True):
+def load_dose_response(min_logconc=-4.0, max_logconc=-4.0, subsample=None, fraction=False, verbose=True):
     """Load cell line response to different drug compounds, sub-select response for a specific
     drug log concentration range and return a pandas dataframe.
 

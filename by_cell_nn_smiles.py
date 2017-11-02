@@ -36,19 +36,35 @@ np.random.seed(seed[0])
 # Load data
 # (data should be generated using dataframe.py)
 root_dir = os.path.dirname(os.path.realpath(__file__))
-# root_dir = os.getcwd()
-data_file_name = args.file  # 'BR:MCF7_smiles.csv'
-data_file_path = os.path.join(root_dir, data_file_name)
-
-assert os.path.exists(data_file_path), "The following path was not found:  {}".format(data_file_path)
-data = pd.read_csv(data_file_path)
+# # root_dir = os.getcwd()
+# data_file_name = args.file  # 'BR:MCF7_smiles.csv'
+# data_file_path = os.path.join(root_dir, data_file_name)
+#
+# assert os.path.exists(data_file_path), "The following path was not found:  {}".format(data_file_path)
+# data = pd.read_csv(data_file_path)
 
 # (another appraoch is to get data)
-# from datasets import NCI60
-# data = NCI60.load_by_cell_data('BR:MCF7', drug_features=['smiles'], subsample=None)
+from datasets import NCI60
+cell = 'BR:MCF7'
+data = NCI60.load_by_cell_data(cell=cell, drug_features=['smiles'], subsample=None)
 
 print('\nTotal SMILES strings: {}'.format(len(data['SMILES'])))
 print('Total SMILES strings (unique): {}'.format(len(data['SMILES'].unique())))
+
+data = data.iloc[:10000, :].copy()
+fname = os.path.join(root_dir, cell + '_smiles' + '.csv')
+data.to_csv(fname)
+
+
+# Take a subset
+if args.nsamples > len(data):
+    total_samples = len(data)
+else:
+    total_samples = args.nsamples
+print("Get and save only {} SMILES strings".format(total_samples))
+data = data.iloc[:total_samples, :].copy()
+fname = os.path.join(root_dir, cell + '_smiles' + '.csv')
+data.to_csv(fname)
 
 
 # Remove SMILES based on length (if too short/large) --> add this to NCI60.py
@@ -77,6 +93,18 @@ data = data.reindex(index=new_index)
 #np.random.shuffle(data)
 print('\n{}'.format(data.head()))
 
+
+# Take a subset
+# if args.nsamples > len(data):
+#     total_samples = len(data)
+# else:
+#     total_samples = args.nsamples
+# print("Get and save only {} SMILES strings".format(total_samples))
+# data = data.iloc[:total_samples, :].copy()
+# fname = os.path.join(root_dir, cell + '_smiles' + '.csv')
+# data.to_csv(fname)
+
+
 # SMILES to list of strings
 samples = [s for s in data['SMILES']]
 
@@ -100,7 +128,14 @@ samples = [s for s in data['SMILES']]
 
 # Choose tokenization method and tokenize
 token_method = args.token  # 'seq_generic', 'seq_smiles', '3d_smiles'
+print("\nStart tokenization...\n")
+t0 = time.time()
 X, tokenizer = ap_utils.tokenize_smiles(samples, token_method=token_method)
+fname = os.path.join(cell + 'smiles' + '.csv')
+#np.save('smiles_tokenized', X)
+# df.to_csv(fname, float_format='%.4g')
+print("Finished tokenization...\n")
+print("Tokenization time: {}\n".format(time.time()-t0))
 
 # Bound the values of GROWTH to [-1, 1]
 data['GROWTH'] = data['GROWTH'].apply(lambda x: -1 if x < -1 else x)
@@ -162,7 +197,11 @@ layer = args.layer  # 'conv1d'
 
 # Callbacks
 callbacks = []
-callbacks.append(keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=7, verbose=True))
+callbacks.append(keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=7, verbose=True, min_lr=0))
+callbacks.append(keras.callbacks.CSVLogger('training.log'))
+callbacks.append(keras.callbacks.ModelCheckpoint('Model', monitor='val_loss', verbose=0, save_best_only=False,
+                                                 save_weights_only=False, mode='auto', period=1))
+
 
 # k-fold CV scheme
 if k_folds == 1:
