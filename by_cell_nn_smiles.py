@@ -51,10 +51,6 @@ data = NCI60.load_by_cell_data(cell=cell, drug_features=['smiles'], subsample=No
 print('\nTotal SMILES strings: {}'.format(len(data['SMILES'])))
 print('Total SMILES strings (unique): {}'.format(len(data['SMILES'].unique())))
 
-data = data.iloc[:10000, :].copy()
-fname = os.path.join(root_dir, cell + '_smiles' + '.csv')
-data.to_csv(fname)
-
 
 # Take a subset
 if args.nsamples > len(data):
